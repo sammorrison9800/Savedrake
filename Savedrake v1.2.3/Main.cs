@@ -391,7 +391,8 @@ namespace Savedrake
                     // Load combobox_auto information first
                     combobox_auto.Items.Clear();
                     combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
-                    combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
+                    //combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
+                    combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex;
 
                     // Load the rest of the settings
                     this.Size = new Size(settings.WindowWidth, settings.WindowHeight);
@@ -1360,6 +1361,12 @@ namespace Savedrake
                 return;
             }
 
+            if (isGameRunning)
+            {
+                MessageBox.Show("Please quit the game before restoring.", "Game Running", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            
             // Check if exactly one item is selected in the ListView
             if (listView.SelectedItems.Count == 1)
             {
