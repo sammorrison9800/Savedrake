@@ -1372,15 +1372,36 @@ namespace Savedrake
             // Check if exactly one item is selected in the ListView
             if (listView.SelectedItems.Count == 1)
             {
-                // Move all files from the directory in textbox1 to the Recycle Bin
-                MoveFilesToRecycleBin(textbox1.Text);
-
                 // Get the selected file name
                 string fileName = listView.SelectedItems[0].Text;
 
                 // Combine the source directory with the file name to get the full file path
                 string filePath = Path.Combine(textbox2.Text, fileName);
 
+                // Validate the backup is readable BEFORE touching the live saves, so a
+                // corrupt or missing zip can't strand the user with no save game.
+                if (!File.Exists(filePath))
+                {
+                    MessageBox.Show("The selected Backup file no longer exists on disk.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    LoadBackupHistory();
+                    return;
+                }
+                try
+                {
+                    using (Ionic.Zip.ZipFile probe = Ionic.Zip.ZipFile.Read(filePath))
+                    {
+                        // Touch the entry list to force header parsing; dispose immediately.
+                        int _ = probe.Count;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"The Backup file is not a valid zip and cannot be restored: {ex.Message}\n\nYour current save files have not been touched.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // Move all files from the directory in textbox1 to the Recycle Bin
+                MoveFilesToRecycleBin(textbox1.Text);
 
                 // Unzip the file to the target directory using DotNetZip
                 Status.Text = "Restore started... Please wait.";
