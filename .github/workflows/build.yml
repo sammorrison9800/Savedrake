@@ -2,9 +2,9 @@ name: build
 
 on:
   push:
-    branches: [master]
+    branches: [master, claude-integration]
   pull_request:
-    branches: [master]
+    branches: [master, claude-integration]
 
 jobs:
   build:
