@@ -178,7 +178,6 @@ namespace Savedrake
             listView.MouseDoubleClick += listView_MouseDoubleClick;
             listView.MouseClick += listView_MouseClick;
             listView.AfterLabelEdit += listView_AfterLabelEdit;
-            listView.AfterLabelEdit += new LabelEditEventHandler(listView_AfterLabelEdit);
             listView.ContextMenuStrip = contextMenuStrip;
             listView.KeyDown += ListView_KeyDown;
             listView.ItemSelectionChanged += ListView_ItemSelectionChanged;
@@ -193,7 +192,6 @@ namespace Savedrake
             trayIcon.Visible = false; // Hide the icon initially
             trayIcon.DoubleClick += TrayIcon_DoubleClick; // Event handler for double-clicking the icon
             trayIcon.Text = "Savedrake v1.2.4";
-            this.Resize += new System.EventHandler(this.Main_Resize);
             // Initialize the ContextMenuStrip
             trayMenu = new ContextMenuStrip();
             ToolStripMenuItem showItem = new ToolStripMenuItem("Show");
@@ -212,7 +210,6 @@ namespace Savedrake
             //Combobox
             this.combobox_auto.Leave += new System.EventHandler(this.combobox_auto_Leave);
             this.combobox_auto.KeyDown += new KeyEventHandler(combobox_auto_KeyDown);
-            this.combobox_auto.Validating += new System.ComponentModel.CancelEventHandler(combobox_auto_Validating);
 
             //ToolStripTextBox2 Autobackup Limnit
             //this.toolStripTextBox2.Leave += new EventHandler(toolStripTextBox2_Leave);
