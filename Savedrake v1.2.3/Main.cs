@@ -1312,10 +1312,8 @@ namespace Savedrake
                 {
                     checkbox_auto.Checked = false;
                 }
+                Status.Text = "Backup failed.";
                 MessageBox.Show($"An error occurred while creating the backup: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                Environment.Exit(0);
-                //HATSPATS This error is being trigerre saying combobox_auto is being assessed from nother thread it was created in 
             }
         }
 
