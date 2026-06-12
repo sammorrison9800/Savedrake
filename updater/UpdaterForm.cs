@@ -108,6 +108,13 @@ namespace updater
                 return false;
             }
 
+            // GitHub release tags are conventionally prefixed with 'v' (e.g. "v1.2.5").
+            // Strip it so a future v-prefixed tag doesn't silently break update checks.
+            if (versionString.Length > 1 && (versionString[0] == 'v' || versionString[0] == 'V'))
+            {
+                versionString = versionString.Substring(1);
+            }
+
             string[] versionParts = versionString.Split('.');
             if (versionParts.Length < 2 || versionParts.Length > 4)
             {

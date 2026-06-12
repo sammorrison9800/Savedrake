@@ -369,67 +369,90 @@ namespace Savedrake
 
         private void LoadSettings()
         {
-            if (File.Exists("savedrake_settings.xml"))
+            if (!File.Exists("savedrake_settings.xml"))
             {
-                //wasLoaded = true;
+                return;
+            }
+
+            AppSettings settings;
+            try
+            {
                 var serializer = new XmlSerializer(typeof(AppSettings));
                 using (var reader = new StreamReader("savedrake_settings.xml"))
                 {
-                    var settings = (AppSettings)serializer.Deserialize(reader);
-
-                    //Loading Filenaming convention before
-                    try
-                    {
-                        randomlyGeneratedToolStripMenuItem.Checked = settings.BackupFileName1;
-                        timeStampedToolStripMenuItem.Checked = settings.BackupFileName2;
-                    }
-                    catch { }
-
-                    // Load combobox_auto information first
-                    combobox_auto.Items.Clear();
-                    combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
-                    combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
-
-                    // Load the rest of the settings
-                    this.Size = new Size(settings.WindowWidth, settings.WindowHeight);
-                    textbox1.Text = settings.Textbox1;
-                    textbox2.Text = settings.Textbox2;
-
-                    toolStripTextBox2.Text = settings.AutoBackupLimit;
-                    // Unsubscribe the event to prevent it from firing
-                    //checkbox_auto.CheckedChanged -= checkbox_auto_CheckedChanged;
-                    checkbox_auto.Checked = settings.CheckboxAuto;
-                    //checkbox_auto.CheckedChanged += checkbox_auto_CheckedChanged;
-
-                    checkbox_tray.Checked = settings.CheckboxTray;
-                    checkbox_hot.Checked = settings.CheckboxHot;
-                    textbox3.Text = settings.Textbox3 ?? " "; // Use null-coalescing operator for simplicity
-
-                    
-
-                    // Load the hotkey settings
-                    try
-                    {
-                        _currentMainKey = settings.Hotkey.MainKey;
-                        _controlPressed = settings.Hotkey.ControlPressed;
-                        _shiftPressed = settings.Hotkey.ShiftPressed;
-                        _altPressed = settings.Hotkey.AltPressed;
-                        _isRecordingHotkey = settings.Hotkey.IsRecording;
-                    }
-                    catch { }
-
-                    // Handle hotkey continuation or re-registration
-                    if (_isRecordingHotkey)
-                    {
-                        _isRecordingHotkey = true;
-                        //wasLoaded = true;
-                        checkbox_hot.Checked = false;
-                    }
-                    else if (_currentMainKey != Keys.None)
-                    {
-                        RegisterHotKeyFunction();
-                    }
+                    settings = (AppSettings)serializer.Deserialize(reader);
                 }
+            }
+            catch (Exception ex)
+            {
+                // A corrupt or partially-written settings XML used to throw out
+                // of the form constructor, which prevented the app from ever
+                // starting. Warn the user, leave the file in place so they can
+                // recover it manually, and fall through to defaults.
+                MessageBox.Show(
+                    $"Could not load saved settings (file may be corrupt). Defaults will be used.\n\n{ex.Message}",
+                    "Settings",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (settings == null)
+            {
+                return;
+            }
+
+            //Loading Filenaming convention before
+            try
+            {
+                randomlyGeneratedToolStripMenuItem.Checked = settings.BackupFileName1;
+                timeStampedToolStripMenuItem.Checked = settings.BackupFileName2;
+            }
+            catch { }
+
+            // Load combobox_auto information first
+            combobox_auto.Items.Clear();
+            combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
+            combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
+
+            // Load the rest of the settings
+            this.Size = new Size(settings.WindowWidth, settings.WindowHeight);
+            textbox1.Text = settings.Textbox1;
+            textbox2.Text = settings.Textbox2;
+
+            toolStripTextBox2.Text = settings.AutoBackupLimit;
+            // Unsubscribe the event to prevent it from firing
+            //checkbox_auto.CheckedChanged -= checkbox_auto_CheckedChanged;
+            checkbox_auto.Checked = settings.CheckboxAuto;
+            //checkbox_auto.CheckedChanged += checkbox_auto_CheckedChanged;
+
+            checkbox_tray.Checked = settings.CheckboxTray;
+            checkbox_hot.Checked = settings.CheckboxHot;
+            textbox3.Text = settings.Textbox3 ?? " "; // Use null-coalescing operator for simplicity
+
+
+
+            // Load the hotkey settings
+            try
+            {
+                _currentMainKey = settings.Hotkey.MainKey;
+                _controlPressed = settings.Hotkey.ControlPressed;
+                _shiftPressed = settings.Hotkey.ShiftPressed;
+                _altPressed = settings.Hotkey.AltPressed;
+                _isRecordingHotkey = settings.Hotkey.IsRecording;
+            }
+            catch { }
+
+            // Handle hotkey continuation or re-registration
+            if (_isRecordingHotkey)
+            {
+                _isRecordingHotkey = true;
+                //wasLoaded = true;
+                checkbox_hot.Checked = false;
+            }
+            else if (_currentMainKey != Keys.None)
+            {
+                RegisterHotKeyFunction();
             }
         }
         #endregion
@@ -951,7 +974,7 @@ namespace Savedrake
             // Check if the input matches the pattern
             if (!Regex.IsMatch(input, pattern))
             {
-                MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '1.5 hours', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing
                 combobox_auto.SelectedIndex = 0;
                 return;
@@ -2214,6 +2237,13 @@ namespace Savedrake
             if (string.IsNullOrEmpty(versionString))
             {
                 return false;
+            }
+
+            // GitHub release tags are conventionally prefixed with 'v' (e.g. "v1.2.5").
+            // Strip it so a future v-prefixed tag doesn't silently break update checks.
+            if (versionString.Length > 1 && (versionString[0] == 'v' || versionString[0] == 'V'))
+            {
+                versionString = versionString.Substring(1);
             }
 
             string[] versionParts = versionString.Split('.');
