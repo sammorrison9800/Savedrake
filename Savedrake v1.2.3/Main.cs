@@ -954,7 +954,7 @@ namespace Savedrake
             // Check if the input matches the pattern
             if (!Regex.IsMatch(input, pattern))
             {
-                MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '1.5 hours', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing
                 combobox_auto.SelectedIndex = 0;
                 return;
