@@ -178,7 +178,6 @@ namespace Savedrake
             listView.MouseDoubleClick += listView_MouseDoubleClick;
             listView.MouseClick += listView_MouseClick;
             listView.AfterLabelEdit += listView_AfterLabelEdit;
-            listView.AfterLabelEdit += new LabelEditEventHandler(listView_AfterLabelEdit);
             listView.ContextMenuStrip = contextMenuStrip;
             listView.KeyDown += ListView_KeyDown;
             listView.ItemSelectionChanged += ListView_ItemSelectionChanged;
@@ -193,7 +192,6 @@ namespace Savedrake
             trayIcon.Visible = false; // Hide the icon initially
             trayIcon.DoubleClick += TrayIcon_DoubleClick; // Event handler for double-clicking the icon
             trayIcon.Text = "Savedrake v1.2.4";
-            this.Resize += new System.EventHandler(this.Main_Resize);
             // Initialize the ContextMenuStrip
             trayMenu = new ContextMenuStrip();
             ToolStripMenuItem showItem = new ToolStripMenuItem("Show");
@@ -212,7 +210,6 @@ namespace Savedrake
             //Combobox
             this.combobox_auto.Leave += new System.EventHandler(this.combobox_auto_Leave);
             this.combobox_auto.KeyDown += new KeyEventHandler(combobox_auto_KeyDown);
-            this.combobox_auto.Validating += new System.ComponentModel.CancelEventHandler(combobox_auto_Validating);
 
             //ToolStripTextBox2 Autobackup Limnit
             //this.toolStripTextBox2.Leave += new EventHandler(toolStripTextBox2_Leave);
@@ -1312,10 +1309,8 @@ namespace Savedrake
                 {
                     checkbox_auto.Checked = false;
                 }
+                Status.Text = "Backup failed.";
                 MessageBox.Show($"An error occurred while creating the backup: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                Environment.Exit(0);
-                //HATSPATS This error is being trigerre saying combobox_auto is being assessed from nother thread it was created in 
             }
         }
 
@@ -1374,15 +1369,36 @@ namespace Savedrake
             // Check if exactly one item is selected in the ListView
             if (listView.SelectedItems.Count == 1)
             {
-                // Move all files from the directory in textbox1 to the Recycle Bin
-                MoveFilesToRecycleBin(textbox1.Text);
-
                 // Get the selected file name
                 string fileName = listView.SelectedItems[0].Text;
 
                 // Combine the source directory with the file name to get the full file path
                 string filePath = Path.Combine(textbox2.Text, fileName);
 
+                // Validate the backup is readable BEFORE touching the live saves, so a
+                // corrupt or missing zip can't strand the user with no save game.
+                if (!File.Exists(filePath))
+                {
+                    MessageBox.Show("The selected Backup file no longer exists on disk.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    LoadBackupHistory();
+                    return;
+                }
+                try
+                {
+                    using (Ionic.Zip.ZipFile probe = Ionic.Zip.ZipFile.Read(filePath))
+                    {
+                        // Touch the entry list to force header parsing; dispose immediately.
+                        int _ = probe.Count;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"The Backup file is not a valid zip and cannot be restored: {ex.Message}\n\nYour current save files have not been touched.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // Move all files from the directory in textbox1 to the Recycle Bin
+                MoveFilesToRecycleBin(textbox1.Text);
 
                 // Unzip the file to the target directory using DotNetZip
                 Status.Text = "Restore started... Please wait.";
@@ -2072,35 +2088,32 @@ namespace Savedrake
 
                 if (confirmResult == DialogResult.Yes)
                 {
-                    // Indicate that a new deletion action has started
+                    // Snapshot the selected file paths before mutating the ListView.
+                    // LoadBackupHistory() clears listView.Items, so iterating
+                    // SelectedItems directly and refreshing inside the loop would
+                    // throw or skip files on multi-select delete.
+                    List<string> filesToDelete = listView.SelectedItems
+                        .Cast<ListViewItem>()
+                        .Select(item => Path.Combine(textbox2.Text, item.Text))
+                        .ToList();
+
                     bool isNewDel = true;
                     try
                     {
-                        foreach (ListViewItem item in listView.SelectedItems)
+                        foreach (string filePath in filesToDelete)
                         {
-                            // Get the full path of the selected file
-                            string filePath = Path.Combine(textbox2.Text, item.Text);
-
-                            // Record the deletion
                             RecordDeletion(filePath, isNewDel);
-
-                            // Subsequent deletions in the loop are part of the same action
                             isNewDel = false;
 
-                            // Move the file to the Recycle Bin
                             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(filePath,
                                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-
-                            // Optionally, remove the item from the ListView after moving it to the Recycle Bin
-                            //listView.Items.Remove(item);
-                            LoadBackupHistory();
-                            listView.Sort();
-                            Status.Text = "Backup(s) deleted sucessfully.";
-
-                            // Update the undo button state after the operation
-                            UpdateUndoButtonState();
                         }
+
+                        LoadBackupHistory();
+                        listView.Sort();
+                        Status.Text = "Backup(s) deleted sucessfully.";
+                        UpdateUndoButtonState();
                     }
                     catch (Exception ex)
                     {
