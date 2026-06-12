@@ -95,9 +95,6 @@
   <ItemGroup>
     <Compile Include="ListViewDataComparer.cs" />
     <Compile Include="hotkey.cs" />
-    <Compile Include="hotkey.Designer.cs">
-      <DependentUpon>hotkey.cs</DependentUpon>
-    </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
