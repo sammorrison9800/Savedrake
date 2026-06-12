@@ -2088,35 +2088,32 @@ namespace Savedrake
 
                 if (confirmResult == DialogResult.Yes)
                 {
-                    // Indicate that a new deletion action has started
+                    // Snapshot the selected file paths before mutating the ListView.
+                    // LoadBackupHistory() clears listView.Items, so iterating
+                    // SelectedItems directly and refreshing inside the loop would
+                    // throw or skip files on multi-select delete.
+                    List<string> filesToDelete = listView.SelectedItems
+                        .Cast<ListViewItem>()
+                        .Select(item => Path.Combine(textbox2.Text, item.Text))
+                        .ToList();
+
                     bool isNewDel = true;
                     try
                     {
-                        foreach (ListViewItem item in listView.SelectedItems)
+                        foreach (string filePath in filesToDelete)
                         {
-                            // Get the full path of the selected file
-                            string filePath = Path.Combine(textbox2.Text, item.Text);
-
-                            // Record the deletion
                             RecordDeletion(filePath, isNewDel);
-
-                            // Subsequent deletions in the loop are part of the same action
                             isNewDel = false;
 
-                            // Move the file to the Recycle Bin
                             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(filePath,
                                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-
-                            // Optionally, remove the item from the ListView after moving it to the Recycle Bin
-                            //listView.Items.Remove(item);
-                            LoadBackupHistory();
-                            listView.Sort();
-                            Status.Text = "Backup(s) deleted sucessfully.";
-
-                            // Update the undo button state after the operation
-                            UpdateUndoButtonState();
                         }
+
+                        LoadBackupHistory();
+                        listView.Sort();
+                        Status.Text = "Backup(s) deleted sucessfully.";
+                        UpdateUndoButtonState();
                     }
                     catch (Exception ex)
                     {
