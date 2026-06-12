@@ -300,7 +300,7 @@ namespace updater
             linkLabel1.Invoke((MethodInvoker)(() => linkLabel1.Visible = true)); // Make sure the linkLabel is visible
         }
         #endregion
-        private string tempDownloadPath = Path.GetTempFileName();
+        private string tempDownloadPath;
         private async Task ApplyUpdateAsync()
         {
             // Declare tempDownloadPath at the beginning of the method
@@ -336,8 +336,11 @@ namespace updater
                 //MessageBox.Show("The update will download and apply the latest version of the application.");
 
                 // Show a message to the user that the update is starting
-                
-                string tempDownloadPath = Path.GetTempFileName();
+
+                // Assign to the field (no local shadow) so the temp file we
+                // actually download to is the same one referenced elsewhere
+                // in this type, and is properly cleaned up.
+                tempDownloadPath = Path.GetTempFileName();
 
                 // Download the update package
                 using (HttpClient client = new HttpClient())
@@ -346,6 +349,15 @@ namespace updater
                     response.EnsureSuccessStatusCode();
                     byte[] updateBytes = await response.Content.ReadAsByteArrayAsync();
                     File.WriteAllBytes(tempDownloadPath, updateBytes);
+                }
+
+                // Compute the install root once, with a trailing separator, so the
+                // zip-slip check below cannot be bypassed by a sibling-prefix path
+                // like "<extractPath>-evil\..." matching StartsWith(extractPath).
+                string installRoot = Path.GetFullPath(extractPath);
+                if (!installRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                {
+                    installRoot += Path.DirectorySeparatorChar;
                 }
 
                 // Extract the update package
@@ -364,8 +376,8 @@ namespace updater
                             continue;
                         }
 
-                        string destinationPath = Path.GetFullPath(Path.Combine(extractPath, entry.FullName));
-                        if (destinationPath.StartsWith(extractPath, StringComparison.Ordinal))
+                        string destinationPath = Path.GetFullPath(Path.Combine(installRoot, entry.FullName));
+                        if (destinationPath.StartsWith(installRoot, StringComparison.OrdinalIgnoreCase))
                         {
                             entry.ExtractToFile(destinationPath, true);
                         }
