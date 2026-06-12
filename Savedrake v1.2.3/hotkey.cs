@@ -22,9 +22,6 @@ namespace Savedrake
 
         public MessageWindow()
         {
-            // Store the reference to Form1
-
-
             // Create the handle for the message-only window
             this.CreateHandle(new CreateParams());
 
