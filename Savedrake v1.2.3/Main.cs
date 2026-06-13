@@ -473,8 +473,19 @@ namespace Savedrake
 
             // Load combobox_auto information first
             combobox_auto.Items.Clear();
-            combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
-            combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
+            // An older/partial settings file can deserialize with ComboboxList == null;
+            // guard so it doesn't NRE outside the load try/catch and escape into Main_Load.
+            if (settings.ComboboxList != null)
+            {
+                combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
+            }
+            // Only set a selection when there is something to select, and clamp the saved
+            // index to range, so an empty list / stale index can't throw ArgumentOutOfRange.
+            if (combobox_auto.Items.Count > 0)
+            {
+                int savedIndex = settings.ComboboxSelectedIndex;
+                combobox_auto.SelectedIndex = (savedIndex >= 0 && savedIndex < combobox_auto.Items.Count) ? savedIndex : 0;
+            }
 
             // Load the rest of the settings
             this.Size = new Size(settings.WindowWidth, settings.WindowHeight);
@@ -548,8 +559,21 @@ namespace Savedrake
 
         private void KeyValueChanged(object sender, EventArrivedEventArgs e)
         {
-            isGameRunning = CheckGameRunningStatus();
-            OnGameStatusChanged(isGameRunning);
+            // WMI delivers this on a worker thread; OnGameStatusChanged touches UI controls
+            // (Status.Text, checkbox_auto, MessageBox), so marshal onto the UI thread.
+            // BeginInvoke (not Invoke) so the WMI thread never blocks on the UI thread — that
+            // blocking Invoke combined with FormClosing's _watcher.Stop() could deadlock.
+            if (!IsHandleCreated || IsDisposed) return;
+            try
+            {
+                BeginInvoke((MethodInvoker)(() =>
+                {
+                    isGameRunning = CheckGameRunningStatus();
+                    OnGameStatusChanged(isGameRunning);
+                }));
+            }
+            catch (InvalidOperationException) { }
+            catch (ObjectDisposedException) { }
         }
 
 
@@ -2442,7 +2466,16 @@ namespace Savedrake
             string version = GetCurrentVersion();
             if (TryParseVersion(version, out Version parsedVersion))
             {
-                File.WriteAllText("version.txt", parsedVersion.ToString());
+                try
+                {
+                    File.WriteAllText("version.txt", parsedVersion.ToString());
+                }
+                catch
+                {
+                    // Best-effort: under the asInvoker manifest the working dir (e.g. Program
+                    // Files) can be read-only. A throw here would escape into the async-void
+                    // Main_Load and crash startup; version.txt is rewritten on the next run.
+                }
             }
         }
 
@@ -2466,6 +2499,14 @@ namespace Savedrake
             {
                 _watcher.Stop();
                 _watcher.Dispose();
+            }
+
+            // trayIcon is created with `new NotifyIcon()` (not registered with components),
+            // so it is never auto-disposed; without this its tray icon can linger as a
+            // "ghost" until the user hovers over it.
+            if (trayIcon != null)
+            {
+                trayIcon.Dispose();
             }
         }
 
