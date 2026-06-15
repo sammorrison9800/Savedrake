@@ -457,7 +457,6 @@ namespace Savedrake
         }
         #endregion
 
-        //Undetected by Bkav
         #region Autobackup feature
         private bool noGame = false;
         private void InitializeRegistryWatcher()
@@ -1008,7 +1007,6 @@ namespace Savedrake
 
         #endregion
 
-        //Undetected by Bkav
         #region Browse and Open Buttons
 
         private void Button_br_1_Click(object sender, EventArgs e)
@@ -1164,7 +1162,6 @@ namespace Savedrake
         }
         #endregion
 
-        //Undetected by Bkav
         #region Main Resize listView and tray icon
         private void Main_Resize(object sender, EventArgs e)
         {
@@ -1314,14 +1311,14 @@ namespace Savedrake
                 } //hmm - def related
 
                 // Update the ListView with the new backup entry
-                ListViewItem item = new ListViewItem(new[] { Path.GetFileName(backupFileName), DateTime.Now.ToString() }); //conformed no issue HATSPATS
+                ListViewItem item = new ListViewItem(new[] { Path.GetFileName(backupFileName), DateTime.Now.ToString() });
                 //listView.Items.Add(item);
                 //listView.Sort();
 
                 // Update the status
                 LoadBackupHistory();
                 //listView.Sort();
-                Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully."; //def related - HATSPATS
+                Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully.";
                 PlaySoundFromResource(); //mustenable
             }
             catch (Exception ex)
@@ -1341,7 +1338,6 @@ namespace Savedrake
         // Helper method to generate a unique backup file name
         private string GenerateBackupFileName(bool isAutoBackup)
         {
-            //HATSPATS
             // Use a random combination of words for the file name
             string[] words = { "Bitterblack", "Everfall", "Cassardis", "Cyclops", "Dragonforged", "Chimera", "Gransys", "Sorcerer", "Strider", "Mage", "Warrior", "Mystic", "Knight", "Ranger", "Assassin", "Archer", "Magic", "Bluemoon", "Soren", "Dragonsbane", "Salomet", "Quina", "Mercedes", "Julien", "Selene", "Feste", "Daimon", "Ur-Dragon", "Golem", "Harpy", "Saurian", "Ogre", "Lich", "Wight", "Cockatrice", "Manticore", "Goblin", "Hobgoblin", "Bandit", "Phantom", "Specter", "Wraith", "Skeleton", "Zombie", "Hellhound", "Chimera", "Griffin", "Naga", "Lamia", "Medusa", "Basilisk", "Wyrm", "Wyvern", "Drake", "Dark Bishop", "Eliminator", "Gazer", "Death", "Maneater", "Giant", "Undead", "Cursed", "Abyssal", "Lure", "Brine", "Riftstone", "Portcrystal", "Wakestone", "Godsbane", "Airtight", "Flask", "Liquid", "Vim", "Ferrystone", "Conqueror", "Periapts" };
             Random rnd = new Random();
@@ -1363,7 +1359,7 @@ namespace Savedrake
             }
 
             return fileName;
-        } //HATSPATS SUSPECT
+        }
 
         private void button_backup_Click(object sender, EventArgs e)
         {
@@ -2319,7 +2315,7 @@ namespace Savedrake
             listView.Sort();
             foreach (ListViewItem item in listView.Items)
             {
-                item.ToolTipText = "Right-click to rename/delete files."; // Set "PiCKJKL" as the tooltip for each item
+                item.ToolTipText = "Right-click to rename/delete files.";
             }
             
 
@@ -2336,7 +2332,7 @@ namespace Savedrake
 
             foreach (ListViewItem item in listView.Items)
             {
-                item.ToolTipText = "Right-click to rename/delete files."; // Set "PiCKJKL" as the tooltip for each item
+                item.ToolTipText = "Right-click to rename/delete files.";
             }
 
 
