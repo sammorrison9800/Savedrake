@@ -151,7 +151,12 @@ namespace Savedrake
 
             InitializeComponent();
 
-            this.Resize += new System.EventHandler(this.Main_Resize); //System Tray and listView Comumn alignment 
+            // Move any pre-existing settings / autobackup counter from the legacy
+            // working-directory location into %APPDATA%\Savedrake before anything
+            // (LoadSettings, the autobackup timer) reads or writes them.
+            MigrateLegacyStateFiles();
+
+            this.Resize += new System.EventHandler(this.Main_Resize); //System Tray and listView Comumn alignment
 
 
             InitializeRegistryWatcher(); //(Autobackup feature)
@@ -319,6 +324,62 @@ namespace Savedrake
         }
 
        
+        // --- Per-user state file locations -------------------------------------
+        // savedrake_settings.xml and the autobackup counter used to be written
+        // with bare relative paths, landing them in the process's current
+        // working directory (often the install folder, sometimes elsewhere, and
+        // typically unwritable under Program Files). They now live under
+        // %APPDATA%\Savedrake. MigrateLegacyStateFiles() copies any pre-existing
+        // file forward on first run so upgrading users keep their settings.
+        private static readonly string AppDataDir = CreateAppDataDir();
+
+        private static string SettingsFilePath => Path.Combine(AppDataDir, "savedrake_settings.xml");
+        private static string AutoBackupCountFilePath => Path.Combine(AppDataDir, "count_of_autobackups.txt");
+
+        private static string CreateAppDataDir()
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Savedrake");
+            Directory.CreateDirectory(dir); // no-op if it already exists
+            return dir;
+        }
+
+        private static void MigrateLegacyStateFiles()
+        {
+            MigrateLegacyFile("savedrake_settings.xml", SettingsFilePath);
+            MigrateLegacyFile("count_of_autobackups.txt", AutoBackupCountFilePath);
+        }
+
+        // Copies a legacy file from the old working-directory location to its new
+        // %APPDATA% home if one exists and we have not already migrated. Copy (not
+        // move) so a read-only source directory cannot fail the migration and the
+        // original is left untouched as a fallback. Best-effort: never throws.
+        private static void MigrateLegacyFile(string legacyFileName, string newPath)
+        {
+            if (File.Exists(newPath))
+            {
+                return;
+            }
+
+            foreach (string dir in new[] { Environment.CurrentDirectory, Application.StartupPath })
+            {
+                try
+                {
+                    string legacyPath = Path.Combine(dir, legacyFileName);
+                    if (File.Exists(legacyPath))
+                    {
+                        File.Copy(legacyPath, newPath);
+                        return;
+                    }
+                }
+                catch
+                {
+                    // Ignore and try the next candidate location / fall through to defaults.
+                }
+            }
+        }
+
         private void SaveSettings()
         {
             var settings = new AppSettings
@@ -359,7 +420,7 @@ namespace Savedrake
             
 
             var serializer = new XmlSerializer(typeof(AppSettings));
-            using (var writer = new StreamWriter("savedrake_settings.xml"))
+            using (var writer = new StreamWriter(SettingsFilePath))
             {
                 serializer.Serialize(writer, settings);
             }
@@ -369,7 +430,7 @@ namespace Savedrake
 
         private void LoadSettings()
         {
-            if (!File.Exists("savedrake_settings.xml"))
+            if (!File.Exists(SettingsFilePath))
             {
                 return;
             }
@@ -378,7 +439,7 @@ namespace Savedrake
             try
             {
                 var serializer = new XmlSerializer(typeof(AppSettings));
-                using (var reader = new StreamReader("savedrake_settings.xml"))
+                using (var reader = new StreamReader(SettingsFilePath))
                 {
                     settings = (AppSettings)serializer.Deserialize(reader);
                 }
@@ -823,7 +884,7 @@ namespace Savedrake
                     autobackupTimer.Start();
 
                     //Count's before backing up in the beginning.
-                    string countFilePath = "count_of_autobackups.txt";
+                    string countFilePath = AutoBackupCountFilePath;
 
                     // Read the current backup count from the file
                     int backupCount = 0;
@@ -926,7 +987,7 @@ namespace Savedrake
         private void OnAutobackupTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             // Define the path for the count file
-            string countFilePath = "count_of_autobackups.txt";
+            string countFilePath = AutoBackupCountFilePath;
 
             // Read the current backup count from the file
             int backupCount = 0;
@@ -1504,7 +1565,7 @@ namespace Savedrake
         private void LoadBackupHistory()
         {
             // Define the path for the count file
-            string countFilePath = "count_of_autobackups.txt";
+            string countFilePath = AutoBackupCountFilePath;
             // Initialize the backup count
             int backupCount = 0;
 
@@ -2528,10 +2589,10 @@ namespace Savedrake
             {
                 try
                 {
-                    File.Delete("savedrake_settings.xml");
+                    File.Delete(SettingsFilePath);
                     File.Delete("savedrake-updater.xml");
                     File.Delete("version.txt");
-                    File.Delete("count_of_autobackups.txt");
+                    File.Delete(AutoBackupCountFilePath);
                     textbox1.Text = null;
                     textbox2.Text = null;
                     checkbox_auto.Checked = false;
