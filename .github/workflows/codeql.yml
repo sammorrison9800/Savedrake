@@ -1,0 +1,47 @@
+name: codeql
+
+on:
+  push:
+    branches: [master, claude-integration]
+  pull_request:
+    branches: [master, claude-integration]
+  schedule:
+    # Weekly scan so newly published query suites catch existing code.
+    - cron: '17 9 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (csharp)
+    runs-on: windows-latest
+
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          queries: security-and-quality
+
+      - name: Restore NuGet packages
+        run: nuget restore Savedrake.sln
+
+      - name: Build solution (Release)
+        run: msbuild Savedrake.sln /p:Configuration=Release /p:Platform="Any CPU" /m /verbosity:minimal
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"

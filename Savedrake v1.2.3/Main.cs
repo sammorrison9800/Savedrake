@@ -151,7 +151,12 @@ namespace Savedrake
 
             InitializeComponent();
 
-            this.Resize += new System.EventHandler(this.Main_Resize); //System Tray and listView Comumn alignment 
+            // Move any pre-existing settings / autobackup counter from the legacy
+            // working-directory location into %APPDATA%\Savedrake before anything
+            // (LoadSettings, the autobackup timer) reads or writes them.
+            MigrateLegacyStateFiles();
+
+            this.Resize += new System.EventHandler(this.Main_Resize); //System Tray and listView Comumn alignment
 
 
             InitializeRegistryWatcher(); //(Autobackup feature)
@@ -178,7 +183,6 @@ namespace Savedrake
             listView.MouseDoubleClick += listView_MouseDoubleClick;
             listView.MouseClick += listView_MouseClick;
             listView.AfterLabelEdit += listView_AfterLabelEdit;
-            listView.AfterLabelEdit += new LabelEditEventHandler(listView_AfterLabelEdit);
             listView.ContextMenuStrip = contextMenuStrip;
             listView.KeyDown += ListView_KeyDown;
             listView.ItemSelectionChanged += ListView_ItemSelectionChanged;
@@ -193,7 +197,6 @@ namespace Savedrake
             trayIcon.Visible = false; // Hide the icon initially
             trayIcon.DoubleClick += TrayIcon_DoubleClick; // Event handler for double-clicking the icon
             trayIcon.Text = "Savedrake v1.2.4";
-            this.Resize += new System.EventHandler(this.Main_Resize);
             // Initialize the ContextMenuStrip
             trayMenu = new ContextMenuStrip();
             ToolStripMenuItem showItem = new ToolStripMenuItem("Show");
@@ -212,7 +215,6 @@ namespace Savedrake
             //Combobox
             this.combobox_auto.Leave += new System.EventHandler(this.combobox_auto_Leave);
             this.combobox_auto.KeyDown += new KeyEventHandler(combobox_auto_KeyDown);
-            this.combobox_auto.Validating += new System.ComponentModel.CancelEventHandler(combobox_auto_Validating);
 
             //ToolStripTextBox2 Autobackup Limnit
             //this.toolStripTextBox2.Leave += new EventHandler(toolStripTextBox2_Leave);
@@ -322,6 +324,62 @@ namespace Savedrake
         }
 
        
+        // --- Per-user state file locations -------------------------------------
+        // savedrake_settings.xml and the autobackup counter used to be written
+        // with bare relative paths, landing them in the process's current
+        // working directory (often the install folder, sometimes elsewhere, and
+        // typically unwritable under Program Files). They now live under
+        // %APPDATA%\Savedrake. MigrateLegacyStateFiles() copies any pre-existing
+        // file forward on first run so upgrading users keep their settings.
+        private static readonly string AppDataDir = CreateAppDataDir();
+
+        private static string SettingsFilePath => Path.Combine(AppDataDir, "savedrake_settings.xml");
+        private static string AutoBackupCountFilePath => Path.Combine(AppDataDir, "count_of_autobackups.txt");
+
+        private static string CreateAppDataDir()
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Savedrake");
+            Directory.CreateDirectory(dir); // no-op if it already exists
+            return dir;
+        }
+
+        private static void MigrateLegacyStateFiles()
+        {
+            MigrateLegacyFile("savedrake_settings.xml", SettingsFilePath);
+            MigrateLegacyFile("count_of_autobackups.txt", AutoBackupCountFilePath);
+        }
+
+        // Copies a legacy file from the old working-directory location to its new
+        // %APPDATA% home if one exists and we have not already migrated. Copy (not
+        // move) so a read-only source directory cannot fail the migration and the
+        // original is left untouched as a fallback. Best-effort: never throws.
+        private static void MigrateLegacyFile(string legacyFileName, string newPath)
+        {
+            if (File.Exists(newPath))
+            {
+                return;
+            }
+
+            foreach (string dir in new[] { Environment.CurrentDirectory, Application.StartupPath })
+            {
+                try
+                {
+                    string legacyPath = Path.Combine(dir, legacyFileName);
+                    if (File.Exists(legacyPath))
+                    {
+                        File.Copy(legacyPath, newPath);
+                        return;
+                    }
+                }
+                catch
+                {
+                    // Ignore and try the next candidate location / fall through to defaults.
+                }
+            }
+        }
+
         private void SaveSettings()
         {
             var settings = new AppSettings
@@ -362,7 +420,7 @@ namespace Savedrake
             
 
             var serializer = new XmlSerializer(typeof(AppSettings));
-            using (var writer = new StreamWriter("savedrake_settings.xml"))
+            using (var writer = new StreamWriter(SettingsFilePath))
             {
                 serializer.Serialize(writer, settings);
             }
@@ -372,72 +430,94 @@ namespace Savedrake
 
         private void LoadSettings()
         {
-            if (File.Exists("savedrake_settings.xml"))
+            if (!File.Exists(SettingsFilePath))
             {
-                //wasLoaded = true;
+                return;
+            }
+
+            AppSettings settings;
+            try
+            {
                 var serializer = new XmlSerializer(typeof(AppSettings));
-                using (var reader = new StreamReader("savedrake_settings.xml"))
+                using (var reader = new StreamReader(SettingsFilePath))
                 {
-                    var settings = (AppSettings)serializer.Deserialize(reader);
-
-                    //Loading Filenaming convention before
-                    try
-                    {
-                        randomlyGeneratedToolStripMenuItem.Checked = settings.BackupFileName1;
-                        timeStampedToolStripMenuItem.Checked = settings.BackupFileName2;
-                    }
-                    catch { }
-
-                    // Load combobox_auto information first
-                    combobox_auto.Items.Clear();
-                    combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
-                    combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
-
-                    // Load the rest of the settings
-                    this.Size = new Size(settings.WindowWidth, settings.WindowHeight);
-                    textbox1.Text = settings.Textbox1;
-                    textbox2.Text = settings.Textbox2;
-
-                    toolStripTextBox2.Text = settings.AutoBackupLimit;
-                    // Unsubscribe the event to prevent it from firing
-                    //checkbox_auto.CheckedChanged -= checkbox_auto_CheckedChanged;
-                    checkbox_auto.Checked = settings.CheckboxAuto;
-                    //checkbox_auto.CheckedChanged += checkbox_auto_CheckedChanged;
-
-                    checkbox_tray.Checked = settings.CheckboxTray;
-                    checkbox_hot.Checked = settings.CheckboxHot;
-                    textbox3.Text = settings.Textbox3 ?? " "; // Use null-coalescing operator for simplicity
-
-                    
-
-                    // Load the hotkey settings
-                    try
-                    {
-                        _currentMainKey = settings.Hotkey.MainKey;
-                        _controlPressed = settings.Hotkey.ControlPressed;
-                        _shiftPressed = settings.Hotkey.ShiftPressed;
-                        _altPressed = settings.Hotkey.AltPressed;
-                        _isRecordingHotkey = settings.Hotkey.IsRecording;
-                    }
-                    catch { }
-
-                    // Handle hotkey continuation or re-registration
-                    if (_isRecordingHotkey)
-                    {
-                        _isRecordingHotkey = true;
-                        //wasLoaded = true;
-                        checkbox_hot.Checked = false;
-                    }
-                    else if (_currentMainKey != Keys.None)
-                    {
-                        RegisterHotKeyFunction();
-                    }
+                    settings = (AppSettings)serializer.Deserialize(reader);
                 }
+            }
+            catch (Exception ex)
+            {
+                // A corrupt or partially-written settings XML used to throw out
+                // of the form constructor, which prevented the app from ever
+                // starting. Warn the user, leave the file in place so they can
+                // recover it manually, and fall through to defaults.
+                MessageBox.Show(
+                    $"Could not load saved settings (file may be corrupt). Defaults will be used.\n\n{ex.Message}",
+                    "Settings",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (settings == null)
+            {
+                return;
+            }
+
+            //Loading Filenaming convention before
+            try
+            {
+                randomlyGeneratedToolStripMenuItem.Checked = settings.BackupFileName1;
+                timeStampedToolStripMenuItem.Checked = settings.BackupFileName2;
+            }
+            catch { }
+
+            // Load combobox_auto information first
+            combobox_auto.Items.Clear();
+            combobox_auto.Items.AddRange(settings.ComboboxList.ToArray());
+            combobox_auto.SelectedIndex = settings.ComboboxSelectedIndex >= 0 ? settings.ComboboxSelectedIndex : 0;
+
+            // Load the rest of the settings
+            this.Size = new Size(settings.WindowWidth, settings.WindowHeight);
+            textbox1.Text = settings.Textbox1;
+            textbox2.Text = settings.Textbox2;
+
+            toolStripTextBox2.Text = settings.AutoBackupLimit;
+            // Unsubscribe the event to prevent it from firing
+            //checkbox_auto.CheckedChanged -= checkbox_auto_CheckedChanged;
+            checkbox_auto.Checked = settings.CheckboxAuto;
+            //checkbox_auto.CheckedChanged += checkbox_auto_CheckedChanged;
+
+            checkbox_tray.Checked = settings.CheckboxTray;
+            checkbox_hot.Checked = settings.CheckboxHot;
+            textbox3.Text = settings.Textbox3 ?? " "; // Use null-coalescing operator for simplicity
+
+
+
+            // Load the hotkey settings
+            try
+            {
+                _currentMainKey = settings.Hotkey.MainKey;
+                _controlPressed = settings.Hotkey.ControlPressed;
+                _shiftPressed = settings.Hotkey.ShiftPressed;
+                _altPressed = settings.Hotkey.AltPressed;
+                _isRecordingHotkey = settings.Hotkey.IsRecording;
+            }
+            catch { }
+
+            // Handle hotkey continuation or re-registration
+            if (_isRecordingHotkey)
+            {
+                _isRecordingHotkey = true;
+                //wasLoaded = true;
+                checkbox_hot.Checked = false;
+            }
+            else if (_currentMainKey != Keys.None)
+            {
+                RegisterHotKeyFunction();
             }
         }
         #endregion
 
-        //Undetected by Bkav
         #region Autobackup feature
         private bool noGame = false;
         private void InitializeRegistryWatcher()
@@ -804,7 +884,7 @@ namespace Savedrake
                     autobackupTimer.Start();
 
                     //Count's before backing up in the beginning.
-                    string countFilePath = "count_of_autobackups.txt";
+                    string countFilePath = AutoBackupCountFilePath;
 
                     // Read the current backup count from the file
                     int backupCount = 0;
@@ -907,7 +987,7 @@ namespace Savedrake
         private void OnAutobackupTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             // Define the path for the count file
-            string countFilePath = "count_of_autobackups.txt";
+            string countFilePath = AutoBackupCountFilePath;
 
             // Read the current backup count from the file
             int backupCount = 0;
@@ -954,7 +1034,7 @@ namespace Savedrake
             // Check if the input matches the pattern
             if (!Regex.IsMatch(input, pattern))
             {
-                MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '1.5 hours', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing
                 combobox_auto.SelectedIndex = 0;
                 return;
@@ -988,7 +1068,6 @@ namespace Savedrake
 
         #endregion
 
-        //Undetected by Bkav
         #region Browse and Open Buttons
 
         private void Button_br_1_Click(object sender, EventArgs e)
@@ -1144,7 +1223,6 @@ namespace Savedrake
         }
         #endregion
 
-        //Undetected by Bkav
         #region Main Resize listView and tray icon
         private void Main_Resize(object sender, EventArgs e)
         {
@@ -1294,14 +1372,14 @@ namespace Savedrake
                 } //hmm - def related
 
                 // Update the ListView with the new backup entry
-                ListViewItem item = new ListViewItem(new[] { Path.GetFileName(backupFileName), DateTime.Now.ToString() }); //conformed no issue HATSPATS
+                ListViewItem item = new ListViewItem(new[] { Path.GetFileName(backupFileName), DateTime.Now.ToString() });
                 //listView.Items.Add(item);
                 //listView.Sort();
 
                 // Update the status
                 LoadBackupHistory();
                 //listView.Sort();
-                Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully."; //def related - HATSPATS
+                Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully.";
                 PlaySoundFromResource(); //mustenable
             }
             catch (Exception ex)
@@ -1312,10 +1390,8 @@ namespace Savedrake
                 {
                     checkbox_auto.Checked = false;
                 }
+                Status.Text = "Backup failed.";
                 MessageBox.Show($"An error occurred while creating the backup: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                Environment.Exit(0);
-                //HATSPATS This error is being trigerre saying combobox_auto is being assessed from nother thread it was created in 
             }
         }
 
@@ -1323,7 +1399,6 @@ namespace Savedrake
         // Helper method to generate a unique backup file name
         private string GenerateBackupFileName(bool isAutoBackup)
         {
-            //HATSPATS
             // Use a random combination of words for the file name
             string[] words = { "Bitterblack", "Everfall", "Cassardis", "Cyclops", "Dragonforged", "Chimera", "Gransys", "Sorcerer", "Strider", "Mage", "Warrior", "Mystic", "Knight", "Ranger", "Assassin", "Archer", "Magic", "Bluemoon", "Soren", "Dragonsbane", "Salomet", "Quina", "Mercedes", "Julien", "Selene", "Feste", "Daimon", "Ur-Dragon", "Golem", "Harpy", "Saurian", "Ogre", "Lich", "Wight", "Cockatrice", "Manticore", "Goblin", "Hobgoblin", "Bandit", "Phantom", "Specter", "Wraith", "Skeleton", "Zombie", "Hellhound", "Chimera", "Griffin", "Naga", "Lamia", "Medusa", "Basilisk", "Wyrm", "Wyvern", "Drake", "Dark Bishop", "Eliminator", "Gazer", "Death", "Maneater", "Giant", "Undead", "Cursed", "Abyssal", "Lure", "Brine", "Riftstone", "Portcrystal", "Wakestone", "Godsbane", "Airtight", "Flask", "Liquid", "Vim", "Ferrystone", "Conqueror", "Periapts" };
             Random rnd = new Random();
@@ -1345,7 +1420,7 @@ namespace Savedrake
             }
 
             return fileName;
-        } //HATSPATS SUSPECT
+        }
 
         private void button_backup_Click(object sender, EventArgs e)
         {
@@ -1374,15 +1449,36 @@ namespace Savedrake
             // Check if exactly one item is selected in the ListView
             if (listView.SelectedItems.Count == 1)
             {
-                // Move all files from the directory in textbox1 to the Recycle Bin
-                MoveFilesToRecycleBin(textbox1.Text);
-
                 // Get the selected file name
                 string fileName = listView.SelectedItems[0].Text;
 
                 // Combine the source directory with the file name to get the full file path
                 string filePath = Path.Combine(textbox2.Text, fileName);
 
+                // Validate the backup is readable BEFORE touching the live saves, so a
+                // corrupt or missing zip can't strand the user with no save game.
+                if (!File.Exists(filePath))
+                {
+                    MessageBox.Show("The selected Backup file no longer exists on disk.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    LoadBackupHistory();
+                    return;
+                }
+                try
+                {
+                    using (Ionic.Zip.ZipFile probe = Ionic.Zip.ZipFile.Read(filePath))
+                    {
+                        // Touch the entry list to force header parsing; dispose immediately.
+                        int _ = probe.Count;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"The Backup file is not a valid zip and cannot be restored: {ex.Message}\n\nYour current save files have not been touched.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // Move all files from the directory in textbox1 to the Recycle Bin
+                MoveFilesToRecycleBin(textbox1.Text);
 
                 // Unzip the file to the target directory using DotNetZip
                 Status.Text = "Restore started... Please wait.";
@@ -1469,7 +1565,7 @@ namespace Savedrake
         private void LoadBackupHistory()
         {
             // Define the path for the count file
-            string countFilePath = "count_of_autobackups.txt";
+            string countFilePath = AutoBackupCountFilePath;
             // Initialize the backup count
             int backupCount = 0;
 
@@ -2072,35 +2168,32 @@ namespace Savedrake
 
                 if (confirmResult == DialogResult.Yes)
                 {
-                    // Indicate that a new deletion action has started
+                    // Snapshot the selected file paths before mutating the ListView.
+                    // LoadBackupHistory() clears listView.Items, so iterating
+                    // SelectedItems directly and refreshing inside the loop would
+                    // throw or skip files on multi-select delete.
+                    List<string> filesToDelete = listView.SelectedItems
+                        .Cast<ListViewItem>()
+                        .Select(item => Path.Combine(textbox2.Text, item.Text))
+                        .ToList();
+
                     bool isNewDel = true;
                     try
                     {
-                        foreach (ListViewItem item in listView.SelectedItems)
+                        foreach (string filePath in filesToDelete)
                         {
-                            // Get the full path of the selected file
-                            string filePath = Path.Combine(textbox2.Text, item.Text);
-
-                            // Record the deletion
                             RecordDeletion(filePath, isNewDel);
-
-                            // Subsequent deletions in the loop are part of the same action
                             isNewDel = false;
 
-                            // Move the file to the Recycle Bin
                             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(filePath,
                                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-
-                            // Optionally, remove the item from the ListView after moving it to the Recycle Bin
-                            //listView.Items.Remove(item);
-                            LoadBackupHistory();
-                            listView.Sort();
-                            Status.Text = "Backup(s) deleted sucessfully.";
-
-                            // Update the undo button state after the operation
-                            UpdateUndoButtonState();
                         }
+
+                        LoadBackupHistory();
+                        listView.Sort();
+                        Status.Text = "Backup(s) deleted sucessfully.";
+                        UpdateUndoButtonState();
                     }
                     catch (Exception ex)
                     {
@@ -2203,6 +2296,13 @@ namespace Savedrake
                 return false;
             }
 
+            // GitHub release tags are conventionally prefixed with 'v' (e.g. "v1.2.5").
+            // Strip it so a future v-prefixed tag doesn't silently break update checks.
+            if (versionString.Length > 1 && (versionString[0] == 'v' || versionString[0] == 'V'))
+            {
+                versionString = versionString.Substring(1);
+            }
+
             string[] versionParts = versionString.Split('.');
             if (versionParts.Length < 2 || versionParts.Length > 4)
             {
@@ -2276,7 +2376,7 @@ namespace Savedrake
             listView.Sort();
             foreach (ListViewItem item in listView.Items)
             {
-                item.ToolTipText = "Right-click to rename/delete files."; // Set "PiCKJKL" as the tooltip for each item
+                item.ToolTipText = "Right-click to rename/delete files.";
             }
             
 
@@ -2293,7 +2393,7 @@ namespace Savedrake
 
             foreach (ListViewItem item in listView.Items)
             {
-                item.ToolTipText = "Right-click to rename/delete files."; // Set "PiCKJKL" as the tooltip for each item
+                item.ToolTipText = "Right-click to rename/delete files.";
             }
 
 
@@ -2489,10 +2589,10 @@ namespace Savedrake
             {
                 try
                 {
-                    File.Delete("savedrake_settings.xml");
+                    File.Delete(SettingsFilePath);
                     File.Delete("savedrake-updater.xml");
                     File.Delete("version.txt");
-                    File.Delete("count_of_autobackups.txt");
+                    File.Delete(AutoBackupCountFilePath);
                     textbox1.Text = null;
                     textbox2.Text = null;
                     checkbox_auto.Checked = false;
