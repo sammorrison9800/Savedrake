@@ -572,8 +572,8 @@ namespace Savedrake
                     OnGameStatusChanged(isGameRunning);
                 }));
             }
-            catch (InvalidOperationException) { }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { } // most-derived first (derives from InvalidOperationException)
+            catch (InvalidOperationException) { } // handle destroyed between the guard above and BeginInvoke (form closing)
         }
 
 
