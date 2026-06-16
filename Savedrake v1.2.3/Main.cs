@@ -40,6 +40,7 @@ namespace Savedrake
         //Autobackup feature related
         #region
         private System.Timers.Timer autobackupTimer; //(Autobackup feature)
+        private bool _autoBackupInProgress; // R7a: re-entrancy guard for OnAutobackupTimerElapsed (UI-thread only)
         private bool isAutoBackupEnabled = false; //(Autobackup feature)
         private ManagementEventWatcher _watcher; //(Autobackup feature)
         private bool isGameRunning; //(Autobackup feature)
@@ -967,6 +968,10 @@ namespace Savedrake
             if (autobackupTimer == null)
             {
                 autobackupTimer = new System.Timers.Timer();
+                // R7a: marshal Elapsed onto the UI thread. Without this it fires on a ThreadPool thread, where the
+                // callback touches UI controls (Status, checkbox_auto, the backup itself) cross-thread and any
+                // exception is silently swallowed by System.Timers.Timer (so a failed autobackup goes unnoticed).
+                autobackupTimer.SynchronizingObject = this;
                 autobackupTimer.Elapsed += OnAutobackupTimerElapsed;
                 autobackupTimer.AutoReset = true;
                 SetAutoBackupInterval();
@@ -1010,42 +1015,64 @@ namespace Savedrake
 
         private void OnAutobackupTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
-            // Define the path for the count file
-            string countFilePath = AutoBackupCountFilePath;
-
-            // Read the current backup count from the file
-            int backupCount = 0;
-            if (File.Exists(countFilePath))
+            // R7a re-entrancy guard: SynchronizingObject runs this on the UI thread, but AutoReset keeps the timer
+            // firing, and any modal dialog opened below (max-reached / a BackupOperation error) pumps the message
+            // queue — which would dispatch a queued NEXT tick nested inside this one (stacked dialogs, interleaved
+            // count-file read-modify-write). Single UI thread, so a plain field flag suffices.
+            if (_autoBackupInProgress) return;
+            _autoBackupInProgress = true;
+            try
             {
-                int.TryParse(File.ReadAllText(countFilePath), out backupCount);
-            }
-
-            // Parse the integer value from toolStripTextBox1
-            if (int.TryParse(toolStripTextBox2.Text, out int maxBackups))
-            {
-                // Check if the current number of backups is less than the maximum allowed
-                if (backupCount < maxBackups)
+                // R7a fallback: the registry/WMI watcher can miss a game-exit event, leaving the timer running.
+                // Re-check game state on every tick (fresh read, not the cached isGameRunning); if DD2 is no longer
+                // running, sync the flag and pause autobackup rather than backing up stale saves while the game is
+                // closed. Runs on the UI thread (SynchronizingObject), so touching the timer/Status here is safe.
+                if (!CheckGameRunningStatus())
                 {
-                    BackupOperation(true); // Perform the backup operation
-                    backupCount++; // Increment the backup count
+                    isGameRunning = false;
+                    autobackupTimer.Stop();
+                    Status.Text = "Game not running. Autobackup paused.";
+                    return;
+                }
 
-                    // Write the updated count back to the file
-                    File.WriteAllText(countFilePath, backupCount.ToString());
+                // Define the path for the count file
+                string countFilePath = AutoBackupCountFilePath;
+
+                // Read the current backup count from the file
+                int backupCount = 0;
+                if (File.Exists(countFilePath))
+                {
+                    int.TryParse(File.ReadAllText(countFilePath), out backupCount);
+                }
+
+                // Parse the integer value from toolStripTextBox1
+                if (int.TryParse(toolStripTextBox2.Text, out int maxBackups))
+                {
+                    // Check if the current number of backups is less than the maximum allowed
+                    if (backupCount < maxBackups)
+                    {
+                        BackupOperation(true); // Perform the backup operation
+                        backupCount++; // Increment the backup count
+
+                        // Write the updated count back to the file
+                        File.WriteAllText(countFilePath, backupCount.ToString());
+                    }
+                    else
+                    {
+                        autobackupTimer.Stop(); // limit reached — stop BEFORE the modal so no further tick is armed
+                        checkbox_auto.Checked = false;
+                        MessageBox.Show($"The maximum number of {maxBackups} autobackups has been reached. To change the limit go to: \"Files > Settings > Limit Autobackups\" and enter the new limit.", "Autobackup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
                 }
                 else
                 {
-                    // Notify the user that the maximum number of backups has been reached
-                    this.Invoke((MethodInvoker)delegate {
-                        MessageBox.Show($"The maximum number of {maxBackups} autobackups has been reached. To change the limit go to: \"Files > Settings > Limit Autobackups\" and enter the new limit.", "Autobackup", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    });
-                    autobackupTimer.Stop(); // Stop the timer as the limit has been reached
-                    checkbox_auto.Checked = false;
+                    // Notify the user that the value in toolStripTextBox1 is not a valid integer
+                    MessageBox.Show("Please enter a valid integer in the autobackup limit field.", "Autobackup", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
-            else
+            finally
             {
-                // Notify the user that the value in toolStripTextBox1 is not a valid integer
-                MessageBox.Show("Please enter a valid integer in the autobackup limit field.", "Autobackup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _autoBackupInProgress = false;
             }
         }
 
@@ -2687,6 +2714,10 @@ namespace Savedrake
 
         private void Main_FormClosing(object sender, FormClosingEventArgs e)
         {
+            // R7a: stop the autobackup timer FIRST, before any teardown. It now marshals Elapsed onto this form
+            // (SynchronizingObject), so a tick firing while the handle is being destroyed would otherwise throw.
+            autobackupTimer?.Stop();
+
             try
             {
                 SaveSettings();
@@ -2700,6 +2731,8 @@ namespace Savedrake
             // If SaveSettings is successful, or you want to proceed regardless
             UnregisterHotKey(msgWindow.Handle, hotkeyId);
             msgWindow.DestroyHandle(); // Clean up the message-only window
+
+            autobackupTimer?.Dispose(); // R7a: the timer was previously never disposed
 
             if (_watcher != null)
             {
