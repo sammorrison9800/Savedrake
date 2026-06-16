@@ -1487,28 +1487,43 @@ namespace Savedrake
                     LoadBackupHistory();
                     return;
                 }
-                try
+                // STEP 1 — game-running guard (R2). Fresh synchronous read; do NOT use the cached isGameRunning field.
+                if (CheckGameRunningStatus())
                 {
-                    using (Ionic.Zip.ZipFile probe = Ionic.Zip.ZipFile.Read(filePath))
-                    {
-                        // Touch the entry list to force header parsing; dispose immediately.
-                        int _ = probe.Count;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"The Backup file is not a valid zip and cannot be restored: {ex.Message}\n\nYour current save files have not been touched.", "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Please quit Dragon's Dogma 2 before restoring.", "Game Running",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
 
-                // Move all files from the directory in textbox1 to the Recycle Bin
-                MoveFilesToRecycleBin(textbox1.Text);
+                // STEP 2 — Steam Cloud warning (run4 C). Declining costs nothing; no live file touched yet.
+                DialogResult cloud = MessageBox.Show(
+                    "Before restoring, fully EXIT Steam (or disable Dragon's Dogma 2 Cloud Saves in " +
+                    "Steam > Properties). Otherwise Steam may re-upload your OLD save and overwrite this restore." +
+                    "\n\nContinue with the restore?",
+                    "Exit Steam Before Restoring", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (cloud != DialogResult.Yes) { Status.Text = "Restore cancelled."; return; }
 
-                // Unzip the file to the target directory using DotNetZip
-                Status.Text = "Restore started... Please wait.";
-                UnzipFileWithDotNetZip(filePath, textbox1.Text);
+                // STEP 3 — validate the backup BEFORE touching live saves (R1).
+                if (!ValidateBackup(filePath, out string reason))
+                {
+                    MessageBox.Show(reason + "\n\nYour current save files have not been touched.",
+                        "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
 
+                // STEP 4 — delegate ALL destructive work (staging, swap, rollback, cleanup) to the transaction.
+                bool ok = RestoreTransactional(filePath, textbox1.Text);
 
+                // STEP 5 — post-success UI. Undo is DISABLED on success: old saves went to a temp dir, not the
+                // recycle bin, so a recycle-bin Undo would silently no-op. Honest = disable it.
+                if (ok)
+                {
+                    deletedFiles.Clear();
+                    UpdateUndoButtonState();
+                    LoadBackupHistory();
+                    SortComboBoxItems();
+                    listView.Sort();
+                }
             }
             else if (listView.SelectedItems.Count > 1)
             {
@@ -1544,33 +1559,228 @@ namespace Savedrake
             }
         }
 
-        private void UnzipFileWithDotNetZip(string filePath, string targetDirectory)
+        // ===== Transactional restore (Bucket 2 — kills R1 / R2 / R3) =====
+        // Invariant: at every instant the user's saves exist intact in exactly one place — liveDir or rollbackDir.
+        private bool RestoreTransactional(string filePath, string liveDir)
+        {
+            Status.Text = "Restore started... Please wait.";
+            string stagingDir  = CreateSiblingTempDir(liveDir, "savedrake_stage");
+            string rollbackDir = CreateSiblingTempDir(liveDir, "savedrake_rollback");
+            bool stagingStarted = false; // true once T4 begins: live then holds disposable STAGED content, not originals
+            bool rollbackOk = true;      // success leaves true (old saves now stale); a failed recovery sets it false
+            try
+            {
+                ExtractZipToStaging(filePath, stagingDir);                 // T1 stage + zip-slip guard
+                FlattenNestedLayout(stagingDir);                          // T1b flatten nested win64_save wrapper(s) (R3)
+                if (!VerifyStagedDir(stagingDir))                          // T2 verify on disk
+                    throw new System.IO.IOException(
+                        "The backup extracted but does not contain Dragon's Dogma 2 save data. Restore aborted.");
+
+                MoveDirContents(liveDir, rollbackDir);                     // T3 move live aside (same-volume rename)
+                stagingStarted = true;                                     // originals are all in rollbackDir now
+                MoveDirContents(stagingDir, liveDir);                      // T4 move staged into live
+                ClearReadOnlyRecursive(liveDir);                          // T5 strip ReadOnly (R2)
+
+                Status.Text = "Restore successful.";                       // T6 commit
+                MessageBox.Show("Restore successful.", "Information",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return true;
+            }
+            // CS0160: order is load-bearing. ZipException : Exception, UnauthorizedAccessException : SystemException,
+            // IOException : SystemException — none derives from another, so the first three are order-free; Exception MUST be last.
+            catch (Ionic.Zip.ZipException ze)       { rollbackOk = HandleRestoreFailure(ze,  rollbackDir, liveDir, stagingStarted); return false; }
+            catch (UnauthorizedAccessException uae) { rollbackOk = HandleRestoreFailure(uae, rollbackDir, liveDir, stagingStarted); return false; }
+            catch (System.IO.IOException ioEx)      { rollbackOk = HandleRestoreFailure(ioEx, rollbackDir, liveDir, stagingStarted); return false; }
+            catch (Exception ex)                    { rollbackOk = HandleRestoreFailure(ex,  rollbackDir, liveDir, stagingStarted); return false; }
+            finally
+            {
+                TryDeleteDir(stagingDir);
+                // Delete the set-aside originals ONLY when provably safe. Success leaves rollbackOk==true (live now
+                // holds the committed restore, so the old copy is stale); a FULLY recovered failure also leaves it
+                // true with rollbackDir already emptied. When recovery did NOT fully succeed (rollbackOk==false),
+                // rollbackDir may hold the user's ONLY intact copy — preserve it (the dialog named it for recovery).
+                if (rollbackOk) TryDeleteDir(rollbackDir);
+            }
+        }
+
+        private bool HandleRestoreFailure(Exception ex, string rollbackDir, string liveDir, bool stagingStarted)
+        {
+            bool recovered = Rollback(liveDir, rollbackDir, stagingStarted);
+            Status.Text = recovered
+                ? "Restore failed. Your previous save files were restored."
+                : "Restore failed. See the dialog to recover your saves.";
+            string tail = recovered
+                ? "\n\nYour previous save files have been restored."
+                : "\n\nWARNING: automatic recovery did not fully complete, but your ORIGINAL save files were NOT deleted." +
+                  " Some may already be back in your save folder:\n" + liveDir +
+                  "\nand the rest are preserved here:\n" + rollbackDir +
+                  "\nMove any files from the second folder into the first to finish recovering.";
+            MessageBox.Show(ex.Message + tail, "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return recovered; // tells RestoreTransactional whether rollbackDir is empty (safe to delete) or holds the only copy
+        }
+
+        private bool Rollback(string liveDir, string rollbackDir, bool stagingStarted)
         {
             try
             {
+                // If T4 began, liveDir holds disposable STAGED files (all originals are already in rollbackDir) — clear
+                // them so the originals can move back without File.Move name collisions. If T4 never began (including a
+                // partial T3), liveDir still holds un-moved-aside originals, so we must NOT empty it.
+                if (stagingStarted) EmptyDir(liveDir);
+                // rollbackDir holds ONLY the user's originals; move every one back. Works for a fully moved-aside set and
+                // for a partial T3 (the remainder still in liveDir are disjoint by name, so no collision).
+                if (Directory.Exists(rollbackDir)) MoveDirContents(rollbackDir, liveDir);
+                return true;
+            }
+            catch (Exception) { return false; } // never throw out of a catch; dialog will name rollbackDir for manual recovery
+        }
 
-
+        private bool ValidateBackup(string filePath, out string reason)
+        {
+            reason = null;
+            try
+            {
                 using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(filePath))
                 {
-                    zip.ExtractAll(targetDirectory, Ionic.Zip.ExtractExistingFileAction.OverwriteSilently);
+                    if (zip.Count == 0) { reason = "The backup file contains no files."; return false; }
+                    foreach (Ionic.Zip.ZipEntry entry in zip.Entries)
+                    {
+                        if (entry.IsDirectory) continue;
+                        if (IsRealSaveEntry(entry.FileName)) return true; // GetFileName() inside ignores any win64_save\ prefix
+                    }
+                    reason = "The backup does not contain Dragon's Dogma 2 save data (no data*.bin / system.bin).";
+                    return false;
                 }
+            }
+            catch (Ionic.Zip.ZipException ze) { reason = "The backup file is not a valid zip: " + ze.Message; return false; }
+            catch (Exception ex)              { reason = "The backup file could not be read: " + ex.Message; return false; }
+        }
 
-                //RefreshWindowsExplorer();
-                Status.Text = "Restore successful.";
-                MessageBox.Show("Restore successful.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Ionic.Zip.ZipException ze)
+        private static bool IsRealSaveEntry(string entryFileName)
+        {
+            string leaf = Path.GetFileName(entryFileName.Replace('/', Path.DirectorySeparatorChar));
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                       leaf, "^data.*\\.bin$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                || string.Equals(leaf, "system.bin", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void ExtractZipToStaging(string filePath, string stagingDir)
+        {
+            string stagingRoot = Path.GetFullPath(stagingDir);
+            if (!stagingRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                stagingRoot += Path.DirectorySeparatorChar;
+
+            using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(filePath))
             {
-                MessageBox.Show($"The Backup file is either not a zip file or is corrupted: {ze.Message}", "Zip Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                foreach (Ionic.Zip.ZipEntry entry in zip.Entries)
+                {
+                    // zip-slip guard — ported from the HARDENED updater/UpdaterForm.cs:361-391 (GetFullPath both
+                    // sides + trailing separator + OrdinalIgnoreCase). Runs on directory entries too (before the
+                    // IsDirectory skip), because '..' can appear in a directory entry name.
+                    string rel = entry.FileName.Replace('/', Path.DirectorySeparatorChar);
+                    string destFull = Path.GetFullPath(Path.Combine(stagingRoot, rel));
+                    if (!destFull.StartsWith(stagingRoot, StringComparison.OrdinalIgnoreCase))
+                        throw new System.IO.IOException(
+                            "Backup contains an unsafe path entry: '" + entry.FileName + "'. Restore aborted.");
+                    if (entry.IsDirectory) continue;
+                    // Use ONLY this DotNetZip overload (same engine the old ExtractAll used). NOT OpenReader/stream-copy,
+                    // NOT ExtractToFile (System.IO.Compression only). Ionic recreates parent subdirs automatically.
+                    entry.Extract(stagingDir, Ionic.Zip.ExtractExistingFileAction.OverwriteSilently);
+                }
             }
-            catch (System.IO.IOException ioEx)
+        }
+
+        private static bool DetectNestedPrefix(string stagingDir)
+        {
+            return Directory.GetFiles(stagingDir).Length == 0
+                && Directory.GetDirectories(stagingDir).Length == 1
+                && string.Equals(new DirectoryInfo(Directory.GetDirectories(stagingDir)[0]).Name,
+                                 "win64_save", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void FlattenNestedLayout(string stagingDir)
+        {
+            // Peel every nested win64_save\ wrapper (handles single AND doubly-nested R3 layouts). Each pass renames
+            // the sole win64_save husk to a unique name BEFORE lifting its contents up, so an inner win64_save can
+            // move to the root without colliding with the husk it came from. Terminates: each pass strictly reduces
+            // nesting depth. A no-op when staging is already a flat root layout.
+            while (DetectNestedPrefix(stagingDir))
             {
-                MessageBox.Show($"An IO error occurred: {ioEx.Message}", "IO Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                string nested = Directory.GetDirectories(stagingDir)[0];          // the sole win64_save husk
+                string husk = Path.Combine(stagingDir, "._savedrake_husk_" + Guid.NewGuid().ToString("N"));
+                Directory.Move(nested, husk);
+                MoveDirContents(husk, stagingDir);
+                Directory.Delete(husk, false);
             }
-            catch (Exception ex)
+        }
+
+        private static bool VerifyStagedDir(string stagingDir)
+        {
+            string[] all = Directory.GetFiles(stagingDir, "*", SearchOption.AllDirectories);
+            return all.Length > 0 && all.Any(p => IsRealSaveEntry(Path.GetFileName(p))); // System.Linq present (line 12)
+        }
+
+        private static string CreateSiblingTempDir(string liveDir, string tag)
+        {
+            // Parent-of-live keeps temp on the SAME volume → every File.Move/Directory.Move is a near-atomic rename.
+            // For a real DD2 path (...\2054970\remote\win64_save) the parent 'remote' always exists. %TEMP% is a
+            // last-resort fallback only when GetParent is null (drive-root edge).
+            string root = Directory.GetParent(liveDir.TrimEnd(Path.DirectorySeparatorChar))?.FullName
+                          ?? Path.GetTempPath();
+            string dir = Path.Combine(root, "._" + tag + "_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        private static void MoveDirContents(string sourceDir, string destDir)
+        {
+            Directory.CreateDirectory(destDir);
+            foreach (string f in Directory.GetFiles(sourceDir))
+                File.Move(f, Path.Combine(destDir, Path.GetFileName(f)));
+            foreach (string d in Directory.GetDirectories(sourceDir))            // moves subdirs too (fixes the old
+                Directory.Move(d, Path.Combine(destDir, new DirectoryInfo(d).Name)); // top-level-only MoveFilesToRecycleBin gap)
+        }
+
+        private static void EmptyDir(string dir)
+        {
+            if (!Directory.Exists(dir)) return;
+            ClearReadOnlyRecursive(dir); // so a ReadOnly partial file can't block deletion
+            foreach (string f in Directory.GetFiles(dir)) File.Delete(f);
+            foreach (string d in Directory.GetDirectories(dir)) Directory.Delete(d, true);
+        }
+
+        private static void ClearReadOnlyRecursive(string root)
+        {
+            DirectoryInfo dirInfo = new DirectoryInfo(root);
+            if (!dirInfo.Exists) return;
+            // Best-effort like the loops below: a transient lock on the root must NOT throw out of here, or a T5
+            // call could roll back an already-committed restore. Stripping the root's ReadOnly bit is non-essential
+            // (it doesn't block writes to files inside it) — swallow and continue.
+            try { if ((dirInfo.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                      dirInfo.Attributes &= ~FileAttributes.ReadOnly; }
+            catch (UnauthorizedAccessException) { }
+            catch (System.IO.IOException) { }
+            foreach (FileInfo fi in dirInfo.GetFiles("*", SearchOption.AllDirectories))
             {
-                MessageBox.Show($"An error occurred while unzipping the Backup file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                try { if ((fi.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                          fi.Attributes &= ~FileAttributes.ReadOnly; }
+                catch (UnauthorizedAccessException) { }
+                catch (System.IO.IOException) { }
             }
+            foreach (DirectoryInfo di in dirInfo.GetDirectories("*", SearchOption.AllDirectories))
+            {
+                try { if ((di.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                          di.Attributes &= ~FileAttributes.ReadOnly; }
+                catch (UnauthorizedAccessException) { }
+                catch (System.IO.IOException) { }
+            }
+        }
+
+        private static void TryDeleteDir(string dir)
+        {
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+            try { ClearReadOnlyRecursive(dir); Directory.Delete(dir, true); }
+            catch (Exception) { } // best-effort temp cleanup; at worst leaves a hidden ._savedrake_* husk
         }
 
         /*public static void RefreshWindowsExplorer()
