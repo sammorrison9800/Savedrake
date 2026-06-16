@@ -30,6 +30,12 @@ jobs:
       - name: Build solution (${{ matrix.configuration }})
         run: msbuild Savedrake.sln /p:Configuration=${{ matrix.configuration }} /p:Platform="Any CPU" /m /verbosity:minimal
 
+      - name: Run restore regression harness (${{ matrix.configuration }})
+        shell: pwsh
+        run: |
+          & ".\RestoreHarness\bin\RestoreHarness.exe" "Savedrake v1.2.3\bin\${{ matrix.configuration }}"
+          if ($LASTEXITCODE -ne 0) { Write-Error "Restore regression harness FAILED ($LASTEXITCODE)"; exit $LASTEXITCODE }
+
       - name: Upload Release artifacts
         if: matrix.configuration == 'Release'
         uses: actions/upload-artifact@v4
