@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.IO;
@@ -72,8 +73,13 @@ namespace updater
             }
             // Assuming GetLatestVersionFromGit is an async method that returns a Task<string>
             latestVersion = await GetLatestVersionFromGit();
-            downloadUrl = $"https://github.com/{Owner}/{Repo}/releases/download/{latestVersion}/update.zip";
-            downloadUrl = Uri.EscapeUriString(downloadUrl);
+            // Only build a download URL once we actually have a version. If the initial query failed/rate-limited,
+            // latestVersion is null and a naive format string would yield a malformed ".../download//update.zip"
+            // that 404s on Start Update. Leave downloadUrl null; ApplyUpdateAsync bails out cleanly on null.
+            if (!string.IsNullOrEmpty(latestVersion))
+            {
+                downloadUrl = Uri.EscapeUriString($"https://github.com/{Owner}/{Repo}/releases/download/{latestVersion}/update.zip");
+            }
         }
 
         private string GetCurrentVersion()
@@ -198,8 +204,10 @@ namespace updater
 
                     //MessageBox.Show("Update check failed. Could not connect to the internet.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     IsAPIError = true;
-                    button3.Enabled = false;
-                    button3.BackColor = System.Drawing.ColorTranslator.FromHtml("#f0f0f0");
+                    // This catch can run on a ThreadPool thread (UpdaterForm_Load -> Task.Run -> ExecuteUpdateProcess
+                    // -> ... -> here), so touching button3 directly is an unmarshaled cross-thread UI access. Marshal
+                    // it like the rest of the file's run4 fixes already do.
+                    SetStartButtonDisabled();
                 }
                 catch (Exception e)
                 {
@@ -265,6 +273,30 @@ namespace updater
             {
                 return false; // not a readable zip / IO error -> treat as failed verification
             }
+        }
+
+        // Entries that must NOT be overwritten by an update: the user's state files (settings/updater prefs/
+        // version), the feedback sounds, and the updater's OWN running files (which are locked while it runs).
+        private static bool IsSkippedUpdateEntry(string entryFullName)
+        {
+            return entryFullName.Equals("savedrake_settings.xml", StringComparison.OrdinalIgnoreCase)
+                || entryFullName.Equals("Savedrake-Updater.exe", StringComparison.OrdinalIgnoreCase)
+                || entryFullName.Equals("Newtonsoft.Json.dll", StringComparison.OrdinalIgnoreCase)
+                || entryFullName.Equals("savedrake-updater.xml", StringComparison.OrdinalIgnoreCase)
+                || entryFullName.Equals("success.wav", StringComparison.OrdinalIgnoreCase)
+                || entryFullName.Equals("error.wav", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Disable the Start Update button safely from any thread (callers may be on a ThreadPool thread).
+        private void SetStartButtonDisabled()
+        {
+            Action act = () =>
+            {
+                button3.Enabled = false;
+                button3.BackColor = System.Drawing.ColorTranslator.FromHtml("#f0f0f0");
+            };
+            if (IsHandleCreated && InvokeRequired) this.Invoke(act);
+            else act();
         }
 
 
@@ -404,19 +436,28 @@ namespace updater
 
            
 
+            // audit: bail early if we never resolved a download URL (initial version query failed/rate-limited),
+            // instead of requesting a malformed ".../download//update.zip" and surfacing a confusing 404.
+            if (string.IsNullOrEmpty(downloadUrl))
+            {
+                if (this.IsHandleCreated)
+                {
+                    this.Invoke((MethodInvoker)(() =>
+                    {
+                        button3.Enabled = true;
+                        button3.BackColor = Color.White;
+                        MessageBox.Show("Could not determine the latest version to download. Please check your connection and try again.", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }));
+                }
+                return;
+            }
+
+            bool appKilled = false;   // did we stop the running Savedrake? (governs relaunch-on-failure)
+            string stagingDir = null;
             try
             {
-                // Debug line to print the download URL
-                //MessageBox.Show("The update will download and apply the latest version of the application.");
-
-                // Show a message to the user that the update is starting
-
-                // Assign to the field (no local shadow) so the temp file we
-                // actually download to is the same one referenced elsewhere
-                // in this type, and is properly cleaned up.
+                // Download the verified package to a temp file (the field, so cleanup is consistent).
                 tempDownloadPath = Path.GetTempFileName();
-
-                // Download the update package
                 using (HttpClient client = new HttpClient())
                 {
                     HttpResponseMessage response = await client.GetAsync(downloadUrl);
@@ -425,76 +466,138 @@ namespace updater
                     File.WriteAllBytes(tempDownloadPath, updateBytes);
                 }
 
-                // run4: verify the DOWNLOADED package before touching the install. Throw on failure so the existing
-                // catch shows the error and re-enables the button; the running app is NOT killed and nothing is
-                // extracted, leaving the user exactly where they were.
+                // Verify the DOWNLOADED package before touching the install. On failure nothing is killed/extracted.
                 if (!VerifyUpdatePackage(tempDownloadPath))
                 {
                     try { File.Delete(tempDownloadPath); } catch { }
                     throw new Exception("The downloaded update package failed verification and was not installed.");
                 }
 
-                // run4: only now — with a verified package in hand — stop the running Savedrake so its files can be
-                // replaced (the extract below overwrites Savedrake.exe, which can't be replaced while it runs).
-                // WaitForExit so the OS releases the file locks before we extract over them.
-                foreach (Process p in Process.GetProcessesByName("Savedrake"))
-                {
-                    try { p.Kill(); p.WaitForExit(5000); } catch { }
-                }
-
-                // Compute the install root once, with a trailing separator, so the
-                // zip-slip check below cannot be bypassed by a sibling-prefix path
-                // like "<extractPath>-evil\..." matching StartsWith(extractPath).
+                // Install root with a trailing separator so the zip-slip check below cannot be bypassed by a
+                // sibling-prefix path like "<extractPath>-evil\..." matching StartsWith(extractPath).
                 string installRoot = Path.GetFullPath(extractPath);
                 if (!installRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
                 {
                     installRoot += Path.DirectorySeparatorChar;
                 }
 
-                // Extract the update package
+                // ---- PHASE 1: extract the whole package to a STAGING dir BEFORE killing the app or touching the
+                // install. If any entry fails (a nested path, a disk error, a zip-slip attempt), the live install is
+                // untouched and Savedrake is still running — no half-replaced, app-already-killed "brick".
+                stagingDir = Path.Combine(Path.GetTempPath(), "Savedrake_update_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(stagingDir);
+                string stagingRoot = stagingDir.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                    ? stagingDir : stagingDir + Path.DirectorySeparatorChar;
+
+                var staged = new List<string>(); // entry FullNames actually written to staging
+                // Dedup by normalized destination (case-insensitive): if a malformed package had two entries that
+                // map to the SAME install path (e.g. "foo.dll" and "Foo.DLL" on Windows), recording both would put
+                // a duplicate op in the swap list, and a later rollback would delete the just-restored original a
+                // second time with no backup left. Stage/record each destination once.
+                var seenDest = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 using (ZipArchive archive = ZipFile.OpenRead(tempDownloadPath))
                 {
                     foreach (ZipArchiveEntry entry in archive.Entries)
                     {
-                        // Skip the updater executable
-                        if (entry.FullName.Equals("savedrake_settings.xml", StringComparison.OrdinalIgnoreCase) ||
-                            entry.FullName.Equals("Savedrake-Updater.exe", StringComparison.OrdinalIgnoreCase) ||
-                            entry.FullName.Equals("Newtonsoft.Json.dll", StringComparison.OrdinalIgnoreCase) ||
-                            entry.FullName.Equals("savedrake-updater.xml", StringComparison.OrdinalIgnoreCase) ||
-                            entry.FullName.Equals("success.wav", StringComparison.OrdinalIgnoreCase) ||
-                            entry.FullName.Equals("error.wav", StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
+                        if (string.IsNullOrEmpty(entry.Name)) continue;      // directory entry — nothing to write
+                        if (IsSkippedUpdateEntry(entry.FullName)) continue;  // user state + the updater's own files
 
-                        string destinationPath = Path.GetFullPath(Path.Combine(installRoot, entry.FullName));
-                        if (destinationPath.StartsWith(installRoot, StringComparison.OrdinalIgnoreCase))
-                        {
-                            entry.ExtractToFile(destinationPath, true);
-                        }
+                        string dest = Path.GetFullPath(Path.Combine(stagingRoot, entry.FullName));
+                        if (!dest.StartsWith(stagingRoot, StringComparison.OrdinalIgnoreCase)) continue; // zip-slip
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)); // ExtractToFile won't create parents
+                        entry.ExtractToFile(dest, true);
+                        if (seenDest.Add(dest)) staged.Add(entry.FullName);  // first entry for this dest wins
                     }
                 }
 
-                // Delete the update package
-                File.Delete(tempDownloadPath);
+                // ---- PHASE 2: package fully staged — now stop the running Savedrake so its files can be replaced.
+                // WaitForExit so the OS releases the file locks before we swap over them. Only treat the app as
+                // "killed" (→ relaunch on failure) if we actually stopped a running instance AND it exited; a
+                // timed-out/failed kill must NOT set appKilled, or the failure path would spawn a 2nd instance
+                // on top of the still-running one.
+                bool killedAny = false, allExitedCleanly = true;
+                foreach (Process p in Process.GetProcessesByName("Savedrake"))
+                {
+                    killedAny = true;
+                    try { p.Kill(); if (!p.WaitForExit(5000)) allExitedCleanly = false; }
+                    catch { allExitedCleanly = false; }
+                }
+                appKilled = killedAny && allExitedCleanly;
+
+                // ---- PHASE 3: swap staged files into the install dir, backing up each replaced file so a mid-swap
+                // failure can be rolled back to the prior install. ops: dest -> backup ("" = the file was new).
+                var ops = new List<KeyValuePair<string, string>>();
+                try
+                {
+                    foreach (string rel in staged)
+                    {
+                        string src = Path.Combine(stagingDir, rel.Replace('/', Path.DirectorySeparatorChar));
+                        string dest = Path.GetFullPath(Path.Combine(installRoot, rel));
+                        if (!dest.StartsWith(installRoot, StringComparison.OrdinalIgnoreCase)) continue;
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest));
+
+                        string bak = "";
+                        if (File.Exists(dest))
+                        {
+                            bak = dest + ".sdbak";
+                            // Set the original aside — but ONLY if a .sdbak doesn't already exist. A leftover
+                            // .sdbak is the authoritative original from a previously-crashed update; the current
+                            // dest may be the truncated file that crash left behind, so never overwrite the .sdbak
+                            // with it. We just overwrite dest below; the real original stays safe in .sdbak.
+                            if (!File.Exists(bak))
+                            {
+                                File.Move(dest, bak); // same volume → atomic-ish
+                            }
+                        }
+                        // Record the op BEFORE the copy: File.Copy is not atomic, so a mid-write failure must still
+                        // roll this file back (delete the truncated dest, restore bak) — otherwise the in-flight
+                        // file would be stranded truncated with its original orphaned in .sdbak.
+                        ops.Add(new KeyValuePair<string, string>(dest, bak));
+                        File.Copy(src, dest, true);
+                    }
+                }
+                catch
+                {
+                    // Roll back newest-first, restoring the prior install exactly.
+                    for (int i = ops.Count - 1; i >= 0; i--)
+                    {
+                        try
+                        {
+                            string dest = ops[i].Key, bak = ops[i].Value;
+                            if (string.IsNullOrEmpty(bak))
+                            {
+                                if (File.Exists(dest)) File.Delete(dest); // it was a newly added file
+                            }
+                            else
+                            {
+                                if (File.Exists(dest)) File.Delete(dest);
+                                if (File.Exists(bak)) File.Move(bak, dest); // restore the original
+                            }
+                        }
+                        catch { /* best-effort rollback */ }
+                    }
+                    throw; // surface to the outer catch, which relaunches the rolled-back app
+                }
+
+                // Swap committed — drop the per-file backups and scratch dirs.
+                foreach (var op in ops)
+                {
+                    if (!string.IsNullOrEmpty(op.Value)) { try { File.Delete(op.Value); } catch { } }
+                }
+                try { Directory.Delete(stagingDir, true); } catch { }
+                try { File.Delete(tempDownloadPath); } catch { }
 
                 await Task.Run(() => progressBar1.Invoke(new Action(() => { progressBar1.Style = ProgressBarStyle.Continuous; progressBar1.Maximum = 100; progressBar1.Value = 100; progressBar1.Visible = true; })));
-                await Task.Run(() => label5.Invoke(new Action(() => label5.Text = "Autobackup Complete")));
+                await Task.Run(() => label5.Invoke(new Action(() => label5.Text = "Update complete.")));
 
-                // Update was successful
                 this.Invoke((MethodInvoker)(() => MessageBox.Show("Update successful! The application will now start.", "Update Finished", MessageBoxButtons.OK, MessageBoxIcon.Information)));
 
-                // Restart the main application
-                Process.Start(executablePath);
-
-                // Close the updater
+                Process.Start(executablePath); // launch the NEW version
                 Environment.Exit(1);
             }
             catch (Exception ex)
             {
-                // run4: re-enable the button ON THE UI THREAD. ApplyUpdateAsync runs on a pool thread, so a bare
-                // button3.Enabled = true here threw a cross-thread InvalidOperationException that swallowed the
-                // error dialog below and left the button stuck disabled.
+                // Re-enable the button on the UI thread (this runs on a pool thread).
                 if (this.IsHandleCreated)
                 {
                     this.Invoke((MethodInvoker)(() =>
@@ -503,6 +606,16 @@ namespace updater
                         button3.BackColor = Color.White;
                     }));
                 }
+
+                // If we already killed the app, the install is now either fully updated or fully rolled back to the
+                // prior version (never half-replaced), so relaunch it rather than leaving the user with nothing.
+                if (appKilled)
+                {
+                    try { Process.Start(executablePath); } catch { }
+                }
+
+                if (stagingDir != null) { try { Directory.Delete(stagingDir, true); } catch { } }
+                if (!string.IsNullOrEmpty(tempDownloadPath)) { try { File.Delete(tempDownloadPath); } catch { } }
 
                 // Show the error message to the user
                 if (!IsAPIError)
@@ -516,7 +629,7 @@ namespace updater
                         MessageBox.Show($"An error occurred while updating: {ex.Message}", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
                 }
-                
+
             }
         }
 
