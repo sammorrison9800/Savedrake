@@ -89,6 +89,7 @@ namespace RestoreHarness
                 Test_SoundAssetsShipped();   // success.wav / error.wav must ship next to Savedrake.exe
                 Test_MakeUniquePath();   // backup-name collision guard (timestamp backups no longer overwrite)
                 Test_PreRestoreCheckpoint();   // P4: snapshot the live save before a restore so it isn't discarded
+                Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
             }
             catch (Exception ex)
             {
@@ -278,6 +279,46 @@ namespace RestoreHarness
             File.WriteAllBytes(Path.Combine(same, "data000.bin"), B("savedata"));
             bool ok3 = (bool)mi.Invoke(inst, new object[] { same, same });
             Check("live==backup -> skipped (no zip), returns true", ok3 && Directory.GetFiles(same, "*.zip").Length == 0);
+            Console.WriteLine();
+        }
+
+        static void Test_VerifyZipRestorable()
+        {
+            // P1 layer 1: a freshly written backup is CRC-verified (IsZipFile testExtract) before it is published;
+            // truncated/corrupt/missing archives are rejected at creation. VerifyZipRestorable(string, out string) static.
+            Console.WriteLine("== Backup integrity: verify-on-create (P1) ==");
+            var mi = SM("VerifyZipRestorable");
+
+            string good = Path.Combine(work, "verify_good.zip");
+            MakeZip(good, z => { z.AddEntry("data000.bin", B("savedata")); z.AddEntry("system.bin", B("sys")); });
+            object[] a1 = { good, null };
+            bool r1 = (bool)mi.Invoke(null, a1);
+            Check("intact backup -> verifies, no reason", r1 && a1[1] == null, "reason=" + a1[1]);
+
+            string notzip = Path.Combine(work, "verify_notzip.zip");
+            File.WriteAllBytes(notzip, B("this is plain text, definitely not a zip archive"));
+            object[] a2 = { notzip, null };
+            bool r2 = (bool)mi.Invoke(null, a2);
+            Check("non-zip bytes -> rejected with a reason", !r2 && a2[1] != null, "reason=" + a2[1]);
+
+            // High-entropy payload so it stays (near) uncompressed and the file is large enough that the midpoint
+            // lands in the entry's data. Flipping a byte there makes the extracted CRC mismatch -> testExtract fails.
+            byte[] payload = new byte[16384];
+            uint s = 0x12345678u;
+            for (int i = 0; i < payload.Length; i++) { s = s * 1664525u + 1013904223u; payload[i] = (byte)(s >> 24); }
+            string big = Path.Combine(work, "verify_big.zip");
+            MakeZip(big, z => { z.AddEntry("data000.bin", payload); });
+            byte[] cb = File.ReadAllBytes(big);
+            cb[cb.Length / 2] ^= 0xFF; // corrupt a byte in the entry data
+            string corrupt = Path.Combine(work, "verify_corrupt.zip");
+            File.WriteAllBytes(corrupt, cb);
+            object[] a3 = { corrupt, null };
+            bool r3 = (bool)mi.Invoke(null, a3);
+            Check("corrupt entry data -> rejected (CRC mismatch)", !r3 && a3[1] != null, "reason=" + a3[1]);
+
+            object[] a4 = { Path.Combine(work, "verify_missing.zip"), null };
+            bool r4 = (bool)mi.Invoke(null, a4);
+            Check("missing file -> rejected without throwing", !r4 && a4[1] != null, "reason=" + a4[1]);
             Console.WriteLine();
         }
 

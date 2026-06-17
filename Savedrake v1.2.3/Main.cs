@@ -1546,6 +1546,14 @@ namespace Savedrake
                     zip.Comment = "SamMorrison9800"; // This is the hidden comment
                     zip.Save(tempZip); // Save to the temp file first
                 }
+                // Verify-on-create (P1): a backup that fails CRC verification must never be published as if it were
+                // good. Reject it here (delete the temp, throw into the catch below) so the user is told now, while
+                // their live saves are untouched, instead of discovering it only at restore time.
+                if (!VerifyZipRestorable(tempZip, out string verifyReason))
+                {
+                    try { File.Delete(tempZip); } catch { }
+                    throw new System.IO.IOException("the backup failed verification after writing (" + verifyReason + ")");
+                }
                 File.Move(tempZip, backupFileName); // atomically publish the completed backup
 
                 // Update the status
@@ -1579,6 +1587,31 @@ namespace Savedrake
             string candidate;
             do { candidate = Path.Combine(dir, $"{name}_{n++}{ext}"); } while (File.Exists(candidate));
             return candidate;
+        }
+
+        // Backup integrity verification, layer 1 (P1): prove a freshly written archive is actually restorable before
+        // we publish or trust it. DotNetZip's IsZipFile(testExtract:true) opens the zip, reads its directory, and
+        // expands EVERY entry while checking CRCs, so truncation, bit-rot, or a half-written/locked source file is
+        // caught at creation time instead of only when the user finally needs the backup. Returns false (with a
+        // reason) on any failure. Static + file-path-only so the headless harness can test it directly.
+        private static bool VerifyZipRestorable(string zipPath, out string reason)
+        {
+            reason = null;
+            try
+            {
+                // testExtract = true: don't just check the signature, expand every entry and verify its CRC.
+                if (!Ionic.Zip.ZipFile.IsZipFile(zipPath, true))
+                {
+                    reason = "the archive is not a valid, fully readable zip (it may be truncated or corrupt)";
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = "the archive could not be verified: " + ex.Message;
+                return false;
+            }
         }
 
 
@@ -1654,6 +1687,12 @@ namespace Savedrake
                     zip.AddDirectory(liveDir);
                     zip.Comment = "SamMorrison9800";
                     zip.Save(tempZip);
+                }
+                // Verify-on-create (P1): don't trust a checkpoint we can't prove is restorable.
+                if (!VerifyZipRestorable(tempZip, out _))
+                {
+                    try { File.Delete(tempZip); } catch { }
+                    return false;
                 }
                 File.Move(tempZip, checkpointPath); // atomically publish the completed checkpoint
                 return true;
