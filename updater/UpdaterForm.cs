@@ -31,6 +31,20 @@ namespace updater
         private const string Repo = "Savedrake";
         private const string GitHubTokenEnvironmentVariable = "GITHUB_TOKEN";
 
+        // run4: version.txt and savedrake-updater.xml now live in %APPDATA%\Savedrake — the same path the main app
+        // (Savedrake v1.2.3/Main.cs) writes them to. Computed identically so the two stay in lockstep.
+        private static readonly string AppDataDir = CreateAppDataDir();
+        private static string CreateAppDataDir()
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Savedrake");
+            Directory.CreateDirectory(dir); // no-op if it already exists
+            return dir;
+        }
+        private static string VersionFilePath => Path.Combine(AppDataDir, "version.txt");
+        private static string UpdaterXmlPath => Path.Combine(AppDataDir, "savedrake-updater.xml");
+
         public UpdaterForm()
         {
             // Attempt to acquire the mutex
@@ -70,7 +84,11 @@ namespace updater
                 return null;
             }
 
-            string versionFilePath = Path.Combine(extractPath, "version.txt");
+            // run4: version.txt now lives in %APPDATA%\Savedrake (written there by the main app). Fall back to the
+            // legacy install-dir copy so an updater run BEFORE the new main app has migrated it forward still works.
+            string versionFilePath = File.Exists(VersionFilePath)
+                ? VersionFilePath
+                : Path.Combine(extractPath, "version.txt");
             if (File.Exists(versionFilePath))
             {
                 return File.ReadAllText(versionFilePath).Trim();
@@ -358,7 +376,9 @@ namespace updater
             //button3.Enabled = false;
 
 
-            if (!VerifyVersionFile(Path.Combine(extractPath, "version.txt")))
+            // run4: version.txt now lives in %APPDATA% (with a legacy install-dir fallback), same as GetCurrentVersion.
+            string localVersionFile = File.Exists(VersionFilePath) ? VersionFilePath : Path.Combine(extractPath, "version.txt");
+            if (!VerifyVersionFile(localVersionFile))
             {
                 // run4: this method runs on a Task.Run pool thread, so marshal the dialog AND re-enable the button
                 // on the UI thread — otherwise the button stays stuck disabled with no way to retry but a restart.
@@ -513,11 +533,13 @@ namespace updater
                 )
             );
 
-            xmlDoc.Save("savedrake-updater.xml");
+            xmlDoc.Save(UpdaterXmlPath); // run4: write to %APPDATA%\Savedrake (read by the main app from there too)
         }
         public void LoadCheckBoxesFromXml()
         {
-            XDocument xmlDoc = XDocument.Load("savedrake-updater.xml");
+            // run4: prefer %APPDATA%\Savedrake; fall back to a legacy working-dir copy during the transition.
+            string path = File.Exists(UpdaterXmlPath) ? UpdaterXmlPath : "savedrake-updater.xml";
+            XDocument xmlDoc = XDocument.Load(path);
             XElement root = xmlDoc.Element("Root");
             bool checkBox1Value = bool.Parse(root.Element("CheckBox1").Value);
             bool checkBox2Value = bool.Parse(root.Element("CheckBox2").Value);

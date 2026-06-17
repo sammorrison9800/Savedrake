@@ -335,6 +335,11 @@ namespace Savedrake
 
         private static string SettingsFilePath => Path.Combine(AppDataDir, "savedrake_settings.xml");
         private static string AutoBackupCountFilePath => Path.Combine(AppDataDir, "count_of_autobackups.txt");
+        // run4: version.txt and savedrake-updater.xml used to live in the working dir (often Program Files,
+        // read-only) — moved to %APPDATA%\Savedrake alongside the settings/count files. The updater
+        // (updater/UpdaterForm.cs) reads them from the SAME path; keep these two in lockstep with it.
+        private static string VersionFilePath => Path.Combine(AppDataDir, "version.txt");
+        private static string UpdaterXmlPath => Path.Combine(AppDataDir, "savedrake-updater.xml");
 
         private static string CreateAppDataDir()
         {
@@ -349,6 +354,8 @@ namespace Savedrake
         {
             MigrateLegacyFile("savedrake_settings.xml", SettingsFilePath);
             MigrateLegacyFile("count_of_autobackups.txt", AutoBackupCountFilePath);
+            MigrateLegacyFile("version.txt", VersionFilePath);
+            MigrateLegacyFile("savedrake-updater.xml", UpdaterXmlPath);
         }
 
         // Copies a legacy file from the old working-directory location to its new
@@ -376,6 +383,28 @@ namespace Savedrake
                 catch
                 {
                     // Ignore and try the next candidate location / fall through to defaults.
+                }
+            }
+        }
+
+        // Best-effort delete of any legacy working-dir copies of a relocated state file, mirroring the
+        // locations MigrateLegacyFile reads from. Used by the reset path so a "restore defaults" isn't
+        // silently undone by the updater's transition fallback reading a surviving old copy.
+        private static void DeleteLegacyCopies(string legacyFileName)
+        {
+            foreach (string dir in new[] { Environment.CurrentDirectory, Application.StartupPath })
+            {
+                try
+                {
+                    string legacyPath = Path.Combine(dir, legacyFileName);
+                    if (File.Exists(legacyPath))
+                    {
+                        File.Delete(legacyPath);
+                    }
+                }
+                catch
+                {
+                    // Best-effort cleanup; ignore failures (locked / missing / permission).
                 }
             }
         }
@@ -2736,7 +2765,7 @@ namespace Savedrake
             try
             {
                 // Attempt to load the checkBox values from the XML file
-                XElement root = XElement.Load("savedrake-updater.xml");
+                XElement root = XElement.Load(UpdaterXmlPath);
                 checkBox1Value = bool.Parse(root.Element("CheckBox1").Value);
             }
             catch (System.IO.FileNotFoundException)
@@ -2770,7 +2799,7 @@ namespace Savedrake
             {
                 try
                 {
-                    File.WriteAllText("version.txt", parsedVersion.ToString());
+                    File.WriteAllText(VersionFilePath, parsedVersion.ToString());
                 }
                 catch
                 {
@@ -2944,9 +2973,13 @@ namespace Savedrake
                 try
                 {
                     File.Delete(SettingsFilePath);
-                    File.Delete("savedrake-updater.xml");
-                    File.Delete("version.txt");
+                    File.Delete(UpdaterXmlPath);
+                    File.Delete(VersionFilePath);
                     File.Delete(AutoBackupCountFilePath);
+                    // Also clear any legacy working-dir copies left behind by the COPY-based migration,
+                    // so the reset can't be silently undone by a fallback that still reads the old file.
+                    DeleteLegacyCopies("savedrake-updater.xml");
+                    DeleteLegacyCopies("version.txt");
                     textbox1.Text = null;
                     textbox2.Text = null;
                     checkbox_auto.Checked = false;
