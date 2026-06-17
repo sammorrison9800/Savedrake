@@ -216,9 +216,6 @@ namespace Savedrake
             this.combobox_auto.Leave += new System.EventHandler(this.combobox_auto_Leave);
             this.combobox_auto.KeyDown += new KeyEventHandler(combobox_auto_KeyDown);
 
-            //ToolStripTextBox2 Autobackup Limnit
-            //this.toolStripTextBox2.Leave += new EventHandler(toolStripTextBox2_Leave);
-            //this.toolStripTextBox2.LostFocus += new EventHandler(toolStripTextBox2_Leave);
             this.toolStripTextBox2.KeyDown += new KeyEventHandler(toolStripTextBox2_Keydown);
 
             //Close
@@ -888,7 +885,8 @@ namespace Savedrake
             // Handle auto backup based on checkbox state
             else if (checkbox_auto.Checked)
             {
-                //RestartAutoBackup();
+                // No-op while autobackup is active: the interval is reapplied via SetAutoBackupInterval and the
+                // status line is owned by the autobackup flow, so don't overwrite it here.
             }
             else
             {
@@ -1700,30 +1698,6 @@ namespace Savedrake
             }
         }
 
-        private void MoveFilesToRecycleBin(string directoryPath)
-        {
-            // Indicate that a new deletion action has started
-            bool isNewDel = true;
-
-            string[] files = Directory.GetFiles(directoryPath);
-            foreach (string file in files)
-            {
-                // Record the deletion
-                RecordDeletion(file, isNewDel);
-
-                // Subsequent deletions in the loop are part of the same action
-                isNewDel = false;
-
-                // Use the FileSystem.DeleteFile method to move the file to the Recycle Bin
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(file,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-
-                // Update the undo button state after the operation
-                UpdateUndoButtonState();
-            }
-        }
-
         // ===== Transactional restore (Bucket 2 — kills R1 / R2 / R3) =====
         // Invariant: at every instant the user's saves exist intact in exactly one place — liveDir or rollbackDir.
         private bool RestoreTransactional(string filePath, string liveDir)
@@ -1965,15 +1939,6 @@ namespace Savedrake
             try { ClearReadOnlyRecursive(dir); Directory.Delete(dir, true); }
             catch (Exception) { } // best-effort temp cleanup; at worst leaves a hidden ._savedrake_* husk
         }
-
-        /*public static void RefreshWindowsExplorer()
-        {
-            const int SHCNE_ASSOCCHANGED = 0x08000000;
-            const int SHCNF_IDLIST = 0x0000;
-
-            // Call the function with the specified flags to refresh the Windows Explorer
-            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
-        }*/
 
         #endregion
 
@@ -2284,20 +2249,9 @@ namespace Savedrake
             }
         }
 
-        // Override the WndProc method to handle hotkey presses
-        protected override void WndProc(ref System.Windows.Forms.Message m)
-        {
-            base.WndProc(ref m);
-            if (m.Msg == 0x0312 && _currentMainKey != Keys.None)
-            {
-                // The ID of the hotkey that was pressed is in m.WParam
-                // Check if the pressed hotkey matches the recorded hotkey
-                if ((int)m.WParam == hotkeyId)
-                {
-                    BackupOperation(false);
-                }
-            }
-        }
+        // (Removed a dead WndProc override that handled WM_HOTKEY: the global hotkey is registered against
+        // msgWindow.Handle, so Windows posts WM_HOTKEY to MessageWindow.WndProc — the Main form never received it,
+        // making that branch unreachable. The hotkey path runs via MsgWindow_HotkeyPressed.)
         #endregion
 
         //tray
