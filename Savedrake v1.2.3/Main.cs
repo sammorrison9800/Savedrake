@@ -120,7 +120,6 @@ namespace Savedrake
 
         private bool _isUsingHotkey = false;
         private readonly object _syncLock = new object();
-        private volatile bool _EnterPressed = false;
         private volatile bool _isRecordingHotkey = false;
         private volatile bool _controlPressed = false;
         private volatile bool _shiftPressed = false;
@@ -515,16 +514,12 @@ namespace Savedrake
             }
             catch { }
 
-            // Handle hotkey continuation or re-registration
-            if (_isRecordingHotkey)
+            // A persisted "recording" flag is a stale transient — never resume recording on load (R4). But if a
+            // real combo was captured before the app closed, restore it as the bound hotkey instead of dropping it.
+            _isRecordingHotkey = false;
+            if (_currentMainKey != Keys.None)
             {
-                _isRecordingHotkey = true;
-                //wasLoaded = true;
-                checkbox_hot.Checked = false;
-            }
-            else if (_currentMainKey != Keys.None)
-            {
-                RegisterHotKeyFunction();
+                RegisterHotKeyFunction(false); // restore the saved binding silently (validates key + modifier)
             }
         }
         #endregion
@@ -1920,11 +1915,30 @@ namespace Savedrake
         #region Hotkey
         private void InitializeHotkey()
         {
+            // Keep the delegate rooted so it can't be GC'd while a hook is live, but do NOT install the global
+            // low-level keyboard hook at startup (R4). The hook is installed ONLY while actively recording a
+            // hotkey and removed the instant recording ends — see InstallRecordingHook / RemoveRecordingHook.
             _proc = HookCallback;
-            _hookID = SetHook(_proc);
 
             msgWindow = new MessageWindow();
             msgWindow.HotkeyPressed += MsgWindow_HotkeyPressed;
+        }
+
+        // R4: the WH_KEYBOARD_LL hook lives ONLY during hotkey recording. Both helpers run on the UI thread and
+        // are idempotent, so _hookID is a single source of truth (no second SetHook overwriting/leaking the first).
+        private void InstallRecordingHook()
+        {
+            if (_hookID == IntPtr.Zero)
+                _hookID = SetHook(_proc);
+        }
+
+        private void RemoveRecordingHook()
+        {
+            if (_hookID != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hookID);
+                _hookID = IntPtr.Zero;
+            }
         }
 
         private void MsgWindow_HotkeyPressed(object sender, EventArgs e)
@@ -1967,50 +1981,50 @@ namespace Savedrake
 
                 if (_isRecordingHotkey)
                 {
-                    // Check if the user pressed the Escape key to finish recording the hotkey
+                    // Esc cancels recording. R4: do NOT swallow it — fall through to CallNextHookEx so Esc still
+                    // reaches whatever app the user is in. BeginInvoke keeps the hook callback fast and non-blocking.
                     if (key == Keys.Escape)
                     {
                         lock (_syncLock)
                         {
-                            _EnterPressed = true;
                             _isRecordingHotkey = false;
-                            checkbox_hot.Checked = false;
-
-                            System.Threading.Tasks.Task.Run(() =>
+                            RemoveRecordingHook();
+                            this.BeginInvoke((MethodInvoker)delegate
                             {
-                                this.Invoke((MethodInvoker)delegate
-                                {
-                                    MessageBox.Show($"Hotkey recording cancelled.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                                });
+                                checkbox_hot.Checked = false;
+                                Status.Text = "Hotkey recording cancelled.";
+                                MessageBox.Show("Hotkey recording cancelled.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             });
-
-                            return (IntPtr)1; // Prevent further processing of the Escape key
                         }
+                        return CallNextHookEx(_hookID, nCode, wParam, lParam);
                     }
+                    // Enter finishes recording. Registration is validated (real key + a modifier); on an invalid
+                    // combo we stay in recording so the user can fix it. R4: Enter is NOT swallowed either.
                     else if (key == Keys.Enter)
                     {
                         lock (_syncLock)
                         {
-                            _EnterPressed = true;
-                            _isRecordingHotkey = false;
-                            RegisterHotKeyFunction();
-                            this.Invoke((MethodInvoker)delegate
+                            if (RegisterHotKeyFunction(true))
                             {
-                                textbox3.Text = textbox3.Text.Replace("(Enter to finish\\Esc to cancle)", "");
-                                Status.Text = "Hotkey recorded.";
-                                string hotkeyString = GetHotkeyString(); // Make sure this method is thread-safe
-                                System.Threading.Tasks.Task.Run(() =>
+                                _isRecordingHotkey = false;
+                                RemoveRecordingHook();
+                                string hotkeyString = GetHotkeyString();
+                                this.BeginInvoke((MethodInvoker)delegate
                                 {
-                                    this.Invoke((MethodInvoker)delegate
-                                    {
-                                        MessageBox.Show($"Hotkey set to: {hotkeyString}", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                                    });
+                                    textbox3.Text = textbox3.Text.Replace("(Enter to finish\\Esc to cancle)", "");
+                                    Status.Text = "Hotkey recorded.";
+                                    MessageBox.Show($"Hotkey set to: {hotkeyString}", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
                                 });
-                            });
-
-
-                            return (IntPtr)1; // Prevent further processing of the Enter key
+                            }
+                            else
+                            {
+                                this.BeginInvoke((MethodInvoker)delegate
+                                {
+                                    Status.Text = "Hold Ctrl/Shift/Alt and press a key, then Enter.";
+                                });
+                            }
                         }
+                        return CallNextHookEx(_hookID, nCode, wParam, lParam);
                     }
 
                     // Check for modifier keys
@@ -2057,30 +2071,30 @@ namespace Savedrake
         {
             if (checkbox_hot.Checked)
             {
+                // Recording is a user action — never auto-start it while restoring saved UI state on load.
+                if (isLoading) return;
+
+                // Start fresh: forget any half-entered combo and drop the previous binding so it can't fire
+                // while the user presses keys for a new one. The hook goes live ONLY now, during recording (R4).
+                lock (_syncLock)
+                {
+                    _currentMainKey = Keys.None;
+                    _controlPressed = _shiftPressed = _altPressed = false;
+                }
+                UnregisterHotKey(msgWindow.Handle, hotkeyId);
                 _isRecordingHotkey = true;
-                RegisterHotKeyFunction();
-                //textbox3.ForeColor = Color.OrangeRed;
+                InstallRecordingHook();
                 textbox3.Text = "Press your keys \n" +
                 $"(Enter to finish\\Esc to cancle)";
-                if (!isLoading)
-                {
-                    Status.Text = "Recording Hotkey...";
-                }
-                else { Status.Text = "Ready."; }
-                _hookID = SetHook(_proc);
-
-
-
+                Status.Text = "Recording Hotkey...";
             }
             else
             {
-                UnhookWindowsHookEx(_hookID);
-                // Reset the recorded keys
-                //_currentMainKey = Keys.None;
-                //_controlPressed = _shiftPressed = _altPressed = false;
+                _isRecordingHotkey = false;
+                RemoveRecordingHook(); // unhook the instant the toggle goes off (R4)
                 ResetHotkey();
                 textbox3.Text = " ";
-                Status.Text = "Hotkey disabled.";
+                if (!isLoading) Status.Text = "Hotkey disabled.";
             }
         }
         private void ResetHotkey()
@@ -2089,11 +2103,13 @@ namespace Savedrake
             _currentMainKey = Keys.None;
             _controlPressed = _shiftPressed = _altPressed = false;
             UnregisterHotKey(msgWindow.Handle, hotkeyId);
-            Status.Text = "Hotkey reset.";
+            if (!isLoading) Status.Text = "Hotkey reset.";
         }
 
-        // Method to register the hotkey
-        private void RegisterHotKeyFunction()
+        // Registers the current combo as a global hotkey; returns true on success. R4: refuses an empty key
+        // (vk==0 / Keys.None) or a bare key with no modifier — either would fail to register or hijack a plain
+        // key (e.g. a gameplay key) system-wide. `announce` gates user-facing dialogs (false on silent load).
+        private bool RegisterHotKeyFunction(bool announce)
         {
             lock (_syncLock)
             {
@@ -2101,17 +2117,28 @@ namespace Savedrake
                                         (_shiftPressed ? MOD_SHIFT : 0) |
                                         (_altPressed ? MOD_ALT : 0));
 
+                if (_currentMainKey == Keys.None || modifiers == 0)
+                {
+                    if (announce)
+                        this.BeginInvoke((MethodInvoker)delegate
+                        {
+                            MessageBox.Show("Pick a key together with at least one modifier (Ctrl, Shift, or Alt).",
+                                "Hotkey", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        });
+                    return false;
+                }
+
+                UnregisterHotKey(msgWindow.Handle, hotkeyId); // replace any prior binding before re-registering
                 if (!RegisterHotKey(msgWindow.Handle, hotkeyId, modifiers, (uint)_currentMainKey))
                 {
-                    if (!_EnterPressed)
-                    {
-                        this.Invoke((MethodInvoker)delegate
+                    if (announce)
+                        this.BeginInvoke((MethodInvoker)delegate
                         {
                             MessageBox.Show("Failed to register the hotkey.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         });
-                        _EnterPressed = true;
-                    }
+                    return false;
                 }
+                return true;
             }
         }
 
@@ -2740,6 +2767,7 @@ namespace Savedrake
             }
 
             // If SaveSettings is successful, or you want to proceed regardless
+            RemoveRecordingHook(); // R4: drop the keyboard hook on close (e.g. if closed mid-recording)
             UnregisterHotKey(msgWindow.Handle, hotkeyId);
             msgWindow.DestroyHandle(); // Clean up the message-only window
 
