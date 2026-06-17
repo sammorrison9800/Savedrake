@@ -4,6 +4,15 @@ All notable changes to Savedrake are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Pre-restore safety checkpoint: before restoring a backup, Savedrake now automatically
+  snapshots your current save into a `(Pre-Restore)` backup first, so restoring one backup
+  no longer discards the save you currently have. The snapshot is exempt from the autobackup
+  limit and is never auto-pruned; if it cannot be created you are asked whether to continue
+  without it. (#34)
+
 ## [1.3.0] - 2026-06-17
 
 This release is a large batch of reliability and data-safety fixes on top of 1.2.4,

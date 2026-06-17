@@ -1617,6 +1617,54 @@ namespace Savedrake
         //Restore Zip Operations //Undetected
         #region Restore Operation
 
+        // Pre-restore safety checkpoint (P4). RestoreTransactional moves the current live save aside and DELETES it
+        // on success (Undo is disabled afterwards), so restoring backup A would otherwise discard the player's
+        // current state B with no way back. Snapshot the live save into the backup folder first, under a distinct
+        // "(Pre-Restore) " name so it is visible in the history list, is NOT counted as an autobackup (LoadBackupHistory
+        // only counts "(Auto)"/"auto" prefixes), and is never auto-pruned (nothing prunes). Mirrors the atomic
+        // temp+rename write used by BackupOperation. UI-free (takes explicit dirs) so the headless harness can test it.
+        // Returns true on success OR when there is nothing to snapshot; false on failure so the caller can let the
+        // user decide whether to restore without a safety net.
+        private bool CreatePreRestoreCheckpoint(string liveDir, string backupDir)
+        {
+            // Can't safely stage a zip into the very folder being snapshotted.
+            if (string.Equals(Path.GetFullPath(liveDir), Path.GetFullPath(backupDir), StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Nothing to lose if the live folder holds no DD2 save data — skip and let the restore proceed.
+            bool hasSaveData;
+            try
+            {
+                hasSaveData = Directory
+                    .EnumerateFiles(liveDir, "*", SearchOption.AllDirectories)
+                    .Any(p => IsRealSaveEntry(Path.GetFileName(p)));
+            }
+            catch (UnauthorizedAccessException) { hasSaveData = true; } // can't scan -> err toward making a checkpoint
+            catch (System.IO.IOException) { hasSaveData = true; }
+            if (!hasSaveData) return true;
+
+            string checkpointPath = MakeUniquePath(Path.Combine(backupDir, $"(Pre-Restore) {DateTime.Now:yyMMddHHmmss}.zip"));
+            string tempZip = checkpointPath + ".savedrake.tmp";
+            try
+            {
+                // Sweep any orphaned temp files first (same as BackupOperation); our own tempZip doesn't exist yet.
+                try { foreach (string stale in Directory.GetFiles(backupDir, "*.savedrake.tmp")) File.Delete(stale); } catch { }
+                using (Ionic.Zip.ZipFile zip = new Ionic.Zip.ZipFile())
+                {
+                    zip.AddDirectory(liveDir);
+                    zip.Comment = "SamMorrison9800";
+                    zip.Save(tempZip);
+                }
+                File.Move(tempZip, checkpointPath); // atomically publish the completed checkpoint
+                return true;
+            }
+            catch (Exception)
+            {
+                try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+                return false;
+            }
+        }
+
         private void button_res_Click(object sender, EventArgs e)
         {
             // Check if the textboxes are not empty and contain valid paths
@@ -1671,6 +1719,20 @@ namespace Savedrake
                     MessageBox.Show(reason + "\n\nYour current save files have not been touched.",
                         "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
+                }
+
+                // STEP 3b — pre-restore safety checkpoint (P4). RestoreTransactional deletes the current live save on
+                // success, so snapshot it first into a "(Pre-Restore)" backup the user can roll back to. If the
+                // snapshot can't be made, let the user decide rather than silently proceeding without a safety net.
+                Status.Text = "Creating pre-restore checkpoint...";
+                if (!CreatePreRestoreCheckpoint(textbox1.Text, textbox2.Text))
+                {
+                    DialogResult proceed = MessageBox.Show(
+                        "Savedrake could not create a safety snapshot of your current save before restoring.\n\n" +
+                        "If you continue, your current save will be replaced and its current state will be lost.\n\n" +
+                        "Restore anyway?",
+                        "Pre-Restore Checkpoint Failed", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (proceed != DialogResult.Yes) { Status.Text = "Restore cancelled."; return; }
                 }
 
                 // STEP 4 — delegate ALL destructive work (staging, swap, rollback, cleanup) to the transaction.

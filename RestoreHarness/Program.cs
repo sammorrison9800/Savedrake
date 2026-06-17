@@ -88,6 +88,7 @@ namespace RestoreHarness
                 Test_CanonicalizeInterval();   // variant spellings collapse onto one item (no duplicate-item regression)
                 Test_SoundAssetsShipped();   // success.wav / error.wav must ship next to Savedrake.exe
                 Test_MakeUniquePath();   // backup-name collision guard (timestamp backups no longer overwrite)
+                Test_PreRestoreCheckpoint();   // P4: snapshot the live save before a restore so it isn't discarded
             }
             catch (Exception ex)
             {
@@ -236,6 +237,47 @@ namespace RestoreHarness
             File.WriteAllText(r2, "x");
             string r3 = (string)mi.Invoke(null, new object[] { p });
             Check("_2 also exists -> _3", r3 == Path.Combine(dir, "backup_250617120000_3.zip"), r3);
+            Console.WriteLine();
+        }
+
+        static void Test_PreRestoreCheckpoint()
+        {
+            // P4: before a restore deletes the current live save, snapshot it into the backup folder under a
+            // "(Pre-Restore) " name that LoadBackupHistory does NOT count as an autobackup. UI-free, so testable here.
+            Console.WriteLine("== Pre-restore safety checkpoint (P4) ==");
+            var mi = IM("CreatePreRestoreCheckpoint");
+
+            // 1) live save present -> a single (Pre-Restore) zip is created, valid, and contains the save data
+            string live = NewDir("cp_live");
+            File.WriteAllBytes(Path.Combine(live, "data000.bin"), B("savedata"));
+            File.WriteAllBytes(Path.Combine(live, "system.bin"), B("sys"));
+            string backup = NewDir("cp_backup");
+            bool ok = (bool)mi.Invoke(inst, new object[] { live, backup });
+            string[] zips = Directory.GetFiles(backup, "*.zip");
+            Check("checkpoint returns true on success", ok);
+            Check("exactly one checkpoint zip created", zips.Length == 1, "found " + zips.Length);
+            string name = zips.Length == 1 ? Path.GetFileName(zips[0]) : "";
+            Check("checkpoint uses '(Pre-Restore) ' prefix", name.StartsWith("(Pre-Restore) "), name);
+            Check("checkpoint is NOT counted as an autobackup", !name.StartsWith("(Auto)") && !name.StartsWith("auto"), name);
+            bool hasSave = false;
+            if (zips.Length == 1)
+                using (var z = Ionic.Zip.ZipFile.Read(zips[0]))
+                    hasSave = z.Entries.Any(en => IsRealSaveEntry(Path.GetFileName(en.FileName)));
+            Check("checkpoint zip contains the live save data", hasSave);
+            Check("no .savedrake.tmp left behind", Directory.GetFiles(backup, "*.savedrake.tmp").Length == 0);
+
+            // 2) live folder has no DD2 save data -> nothing to lose: skip, return true, create no zip
+            string live2 = NewDir("cp_live_nosave");
+            File.WriteAllBytes(Path.Combine(live2, "readme.txt"), B("nothing"));
+            string backup2 = NewDir("cp_backup2");
+            bool ok2 = (bool)mi.Invoke(inst, new object[] { live2, backup2 });
+            Check("no-save-data live -> skipped, returns true, no zip", ok2 && Directory.GetFiles(backup2, "*.zip").Length == 0);
+
+            // 3) live == backup folder -> refuse (can't stage into the folder being snapshotted), return true
+            string same = NewDir("cp_same");
+            File.WriteAllBytes(Path.Combine(same, "data000.bin"), B("savedata"));
+            bool ok3 = (bool)mi.Invoke(inst, new object[] { same, same });
+            Check("live==backup -> skipped (no zip), returns true", ok3 && Directory.GetFiles(same, "*.zip").Length == 0);
             Console.WriteLine();
         }
 
