@@ -706,6 +706,13 @@ namespace Savedrake
 
         private void SortComboBoxItems()
         {
+            // Capture the current selection (or typed text) BEFORE the rebuild. Items.Clear()+AddRange below
+            // resets SelectedIndex to -1 (so SelectedItem becomes null) while Text persists — which made
+            // SetAutoBackupInterval report "please select an interval" even though one was shown (R5).
+            string current = combobox_auto.SelectedItem != null
+                ? combobox_auto.SelectedItem.ToString()
+                : combobox_auto.Text;
+
             List<string> sortedIntervals = combobox_auto.Items.Cast<string>()
                 .Select(s => new
                 {
@@ -720,6 +727,15 @@ namespace Savedrake
             {
                 combobox_auto.Items.Clear();
                 combobox_auto.Items.AddRange(sortedIntervals.ToArray());
+
+                // Restore the selection so SelectedItem is non-null again; fall back to the text so the shown
+                // value is never blanked. (No re-entrancy: once selected, Text matches an item, so the
+                // SelectedIndexChanged handler won't re-add/re-sort.)
+                int idx = string.IsNullOrEmpty(current) ? -1 : combobox_auto.Items.IndexOf(current);
+                if (idx >= 0)
+                    combobox_auto.SelectedIndex = idx;
+                else if (!string.IsNullOrEmpty(current))
+                    combobox_auto.Text = current;
             });
         }
 
@@ -1344,6 +1360,33 @@ namespace Savedrake
                 return;
             }
 
+            // R6: a folder can be non-empty yet hold no DD2 save data (wrong folder, or leftover files). Refuse to
+            // create a useless/empty-looking backup — require at least one data*.bin / system.bin (searched
+            // recursively; .Any() short-circuits on the first match, so the common case is fast). If the recursive
+            // scan can't complete (e.g. a permission-denied/locked subfolder on a non-default path), fail OPEN:
+            // proceed rather than block a legitimate backup — and never let it throw out of here (an uncaught
+            // throw would crash a manual backup or silently kill an auto-backup on the timer thread).
+            bool hasSaveData = true;
+            try
+            {
+                hasSaveData = Directory
+                    .EnumerateFiles(textbox1.Text, "*", SearchOption.AllDirectories)
+                    .Any(p => IsRealSaveEntry(Path.GetFileName(p)));
+            }
+            catch (UnauthorizedAccessException) { }
+            catch (System.IO.IOException) { }
+            if (!hasSaveData)
+            {
+                if (checkbox_auto.Checked)
+                {
+                    checkbox_auto.Checked = false;
+                }
+                MessageBox.Show("The selected Savegame location has no Dragon's Dogma 2 save data " +
+                    "(no data*.bin / system.bin), so there is nothing to back up.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             // Check if the source and destination directories are not the same
             if (textbox1.Text.Equals(textbox2.Text, StringComparison.OrdinalIgnoreCase))
             {
@@ -1819,8 +1862,8 @@ namespace Savedrake
 
             listView.Items.Clear(); // Clear existing items
 
-            // Load all zip files from the backup directory
-            string[] zipFiles = Directory.GetFiles(textbox2.Text, "*");
+            // Load backup zips from the backup directory (.zip only — avoids opening unrelated files as zips).
+            string[] zipFiles = Directory.GetFiles(textbox2.Text, "*.zip");
 
             // Sort the files by creation date, newest first
             Array.Sort(zipFiles, (x, y) => File.GetCreationTime(y).CompareTo(File.GetCreationTime(x)));
@@ -1834,24 +1877,23 @@ namespace Savedrake
                 {
                     using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipFilePath))
                     {
-                        // Check if the zip file contains the hidden comment
-                        if (zip.Comment == "SamMorrison9800")
-                        {
-                            // Add the zip file to the ListView, even if it's empty
-                            ListViewItem item = new ListViewItem(new[] { fileInfo.Name, fileInfo.CreationTime.ToString() });
-                            item.Tag = fileInfo; // Store the FileInfo object in the Tag property
-                            listView.Items.Add(item);
-                            listView.Sort();
-                        }
+                        // R6: list every readable backup zip. The "SamMorrison9800" comment is treated as a
+                        // provenance tag, not a hard filter — DotNetZip 1.16 can't store a comment on a 0-entry
+                        // zip, so empty backups used to be invisible (and so couldn't be seen or deleted).
+                        ListViewItem item = new ListViewItem(new[] { fileInfo.Name, fileInfo.CreationTime.ToString() });
+                        item.Tag = fileInfo; // Store the FileInfo object in the Tag property
+                        listView.Items.Add(item);
+                        listView.Sort();
                     }
                 }
-                catch (Ionic.Zip.ZipException) // Handle exceptions related to reading zip files
+                catch (Ionic.Zip.ZipException) // not a readable zip — skip it
                 {
-                    // You might want to handle this scenario, e.g., log the error or notify the user
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    MessageBox.Show($"An error occurred while loading the backup: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    // A file we can't open as a zip (e.g. locked / in use). Skip it silently rather than popping a
+                    // modal dialog per file — LoadBackupHistory runs on startup and after every backup/restore/delete,
+                    // so a folder with several such files would otherwise produce a storm of blocking dialogs.
                 }
             }
 
