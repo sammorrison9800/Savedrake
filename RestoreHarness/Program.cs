@@ -92,6 +92,7 @@ namespace RestoreHarness
                 Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
+                Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
             }
             catch (Exception ex)
             {
@@ -396,6 +397,33 @@ namespace RestoreHarness
             Check("legacy backup -> NOT blocked", !(bool)blocked.Invoke(null, l) && l[1] == null, "reason=" + l[1]);
             object[] c = { corrupt, null };
             Check("on-disk corrupted manifest backup -> BLOCKED with reason", (bool)blocked.Invoke(null, c) && c[1] != null, "reason=" + c[1]);
+            Console.WriteLine();
+        }
+
+        static void Test_ClassifyBackup()
+        {
+            // P1 UI: full classification used by "Validate all backups" -> "Validated" / "Legacy" / "Corrupt".
+            Console.WriteLine("== Backup integrity: full classification (P1 UI) ==");
+            var classify = SM("ClassifyBackupFully");
+            string src = NewDir("cls_src");
+            File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("the-save"));
+            string manifest = (string)SM("BuildBackupManifest").Invoke(null, new object[] { src });
+
+            string good = Path.Combine(work, "cls_good.zip");
+            MakeZip(good, z => { z.AddDirectory(src); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+            Check("manifest-valid backup -> Validated", (string)classify.Invoke(null, new object[] { good }) == "Validated");
+
+            string legacy = Path.Combine(work, "cls_legacy.zip");
+            MakeZip(legacy, z => { z.AddEntry("data000.bin", B("the-save")); });
+            Check("no-manifest backup -> Legacy", (string)classify.Invoke(null, new object[] { legacy }) == "Legacy");
+
+            string corrupt = Path.Combine(work, "cls_corrupt.zip");
+            MakeZip(corrupt, z => { z.AddEntry("data000.bin", B("TAMPERED!")); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+            Check("tampered manifest backup -> Corrupt", (string)classify.Invoke(null, new object[] { corrupt }) == "Corrupt");
+
+            string notzip = Path.Combine(work, "cls_notzip.zip");
+            File.WriteAllBytes(notzip, B("not a zip at all"));
+            Check("non-zip file -> Corrupt", (string)classify.Invoke(null, new object[] { notzip }) == "Corrupt");
             Console.WriteLine();
         }
 

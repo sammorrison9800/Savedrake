@@ -24,6 +24,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   save, so a backup that has corrupted on disk since it was created is caught and the restore
   is refused with your current save left untouched. Older backups without a manifest are
   unaffected. (#37)
+- The backup list now has an Integrity column: "Protected" for backups that carry the new
+  checksum manifest and "Legacy" for older ones. A new right-click "Validate all backups"
+  action runs a full check and marks each backup Validated, Legacy, or Corrupt, so you can
+  find a bad backup before you ever need it. (#38)
 
 ## [1.3.0] - 2026-06-17
 

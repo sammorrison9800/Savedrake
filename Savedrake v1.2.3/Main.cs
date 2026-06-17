@@ -172,10 +172,13 @@ namespace Savedrake
             ContextMenuStrip contextMenuStrip = new ContextMenuStrip();
             ToolStripMenuItem renameMenultem = new ToolStripMenuItem("Rename");
             ToolStripMenuItem deleteMenuItem = new ToolStripMenuItem("Delete");
+            ToolStripMenuItem validateAllMenuItem = new ToolStripMenuItem("Validate all backups");
             contextMenuStrip.Items.Add(renameMenultem);
             contextMenuStrip.Items.Add(deleteMenuItem);
+            contextMenuStrip.Items.Add(validateAllMenuItem);
             renameMenultem.Click += RenameMenultem_Click;
             deleteMenuItem.Click += DeleteMenuItem_Click;
+            validateAllMenuItem.Click += (s, e) => ValidateAllBackups();
             listView.ContextMenuStrip = contextMenuStrip;
 
             //listView related
@@ -185,6 +188,13 @@ namespace Savedrake
             listView.AfterLabelEdit += listView_AfterLabelEdit;
             listView.ContextMenuStrip = contextMenuStrip;
             listView.KeyDown += ListView_KeyDown;
+
+            // Integrity column (P1): per-backup state. On load it shows "Protected"/"Legacy" (cheap manifest-presence
+            // check); the right-click "Validate all backups" action runs the full hash check and marks each row
+            // "Validated"/"Legacy"/"Corrupt".
+            if (listView.Columns.Count < 3)
+                listView.Columns.Add("Integrity");
+            listViewColumnResize();
 
             #endregion
 
@@ -1387,6 +1397,16 @@ namespace Savedrake
 
         private void listViewColumnResize()
         {
+            if (listView.Columns.Count >= 3)
+            {
+                // File Name | Date & Time | Integrity. Give Integrity a fixed slice and split the rest ~55/45.
+                int integrity = 72;
+                int rest = Math.Max(0, listView.Width - integrity);
+                listView.Columns[0].Width = (int)(rest * 0.55);
+                listView.Columns[1].Width = rest - listView.Columns[0].Width;
+                listView.Columns[2].Width = integrity;
+                return;
+            }
             listView.Columns[0].Width = listView.Width / 2;
             // Set the width of the second column (Column 1) to be 50% of the ListView's width
             listView.Columns[1].Width = listView.Width / 2;
@@ -1722,6 +1742,16 @@ namespace Savedrake
             if (!HasManifest(zipPath)) return false;                                        // legacy backup -> not gated
             if (VerifyZipAgainstManifest(zipPath, out reason)) { reason = null; return false; } // matches -> allowed
             return true;                                                                    // manifest mismatch -> block
+        }
+
+        // Full integrity classification for the "Validate all backups" action (P1): "Validated" (CRC ok + manifest
+        // matches), "Legacy" (no manifest — predates the feature), or "Corrupt" (CRC fails, or a manifest is present
+        // but does not match). Hashes the archive, so it is on-demand only, never on a list refresh. Static for tests.
+        private static string ClassifyBackupFully(string zipPath)
+        {
+            if (!VerifyZipRestorable(zipPath, out _)) return "Corrupt";
+            if (!HasManifest(zipPath)) return "Legacy";
+            return VerifyZipAgainstManifest(zipPath, out _) ? "Validated" : "Corrupt";
         }
 
 
@@ -2210,7 +2240,15 @@ namespace Savedrake
                         // R6: list every readable backup zip. The "SamMorrison9800" comment is treated as a
                         // provenance tag, not a hard filter — DotNetZip 1.16 can't store a comment on a 0-entry
                         // zip, so empty backups used to be invisible (and so couldn't be seen or deleted).
-                        ListViewItem item = new ListViewItem(new[] { fileInfo.Name, fileInfo.CreationTime.ToString() });
+                        // Cheap integrity hint (P1): "Protected" if the backup carries an integrity manifest, else
+                        // "Legacy". Reuses the zip already open here (no extra read). The full hash check that yields
+                        // "Validated"/"Corrupt" runs only on demand via the "Validate all backups" right-click action,
+                        // because hashing every backup on every refresh would be slow.
+                        bool hasManifest = zip.Entries.Any(en => IsManifestEntry(en.FileName));
+                        ListViewItem item = new ListViewItem(new[] { fileInfo.Name, fileInfo.CreationTime.ToString(),
+                            hasManifest ? "Protected" : "Legacy" });
+                        item.UseItemStyleForSubItems = false;
+                        item.SubItems[2].ForeColor = hasManifest ? System.Drawing.Color.SteelBlue : System.Drawing.Color.Gray;
                         item.Tag = fileInfo; // Store the FileInfo object in the Tag property
                         listView.Items.Add(item);
                         listView.Sort();
@@ -2242,6 +2280,44 @@ namespace Savedrake
 
             // Write the new count back to the file
             File.WriteAllText(countFilePath, backupCount.ToString());
+        }
+
+        // Right-click "Validate all backups" action (P1): run the FULL integrity check on every listed backup and mark
+        // each row in the Integrity column — green "Validated", gray "Legacy", red "Corrupt"/"Missing". This hashes
+        // every backup, so it can take a moment on large folders; the cheap "Protected"/"Legacy" hint is what shows on
+        // load. Read-only: it never modifies, deletes, or touches a backup.
+        private void ValidateAllBackups()
+        {
+            if (listView.Items.Count == 0)
+            {
+                MessageBox.Show("There are no backups to validate.", "Validate Backups", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            Cursor previous = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            Status.Text = "Validating backups...";
+            int validated = 0, legacy = 0, failed = 0;
+            try
+            {
+                foreach (ListViewItem item in listView.Items)
+                {
+                    FileInfo fi = item.Tag as FileInfo;
+                    string path = fi != null ? fi.FullName : Path.Combine(textbox2.Text, item.Text);
+                    string state = File.Exists(path) ? ClassifyBackupFully(path) : "Missing";
+                    while (item.SubItems.Count < 3) item.SubItems.Add(string.Empty);
+                    item.UseItemStyleForSubItems = false;
+                    item.SubItems[2].Text = state;
+                    if (state == "Validated") { validated++; item.SubItems[2].ForeColor = System.Drawing.Color.ForestGreen; }
+                    else if (state == "Legacy") { legacy++; item.SubItems[2].ForeColor = System.Drawing.Color.Gray; }
+                    else { failed++; item.SubItems[2].ForeColor = System.Drawing.Color.Firebrick; }
+                }
+            }
+            finally { Cursor.Current = previous; }
+            listView.Refresh();
+            Status.Text = $"Validated {listView.Items.Count} backups: {validated} OK, {legacy} legacy, {failed} failed.";
+            if (failed > 0)
+                MessageBox.Show(failed + " backup(s) failed validation and may not be restorable. They are marked in red in the Integrity column.",
+                    "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         #endregion
