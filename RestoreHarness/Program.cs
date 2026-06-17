@@ -87,6 +87,7 @@ namespace RestoreHarness
                 Test_TryParseInterval();   // locale-tolerant autobackup-interval parser (single source of truth)
                 Test_CanonicalizeInterval();   // variant spellings collapse onto one item (no duplicate-item regression)
                 Test_SoundAssetsShipped();   // success.wav / error.wav must ship next to Savedrake.exe
+                Test_MakeUniquePath();   // backup-name collision guard (timestamp backups no longer overwrite)
             }
             catch (Exception ex)
             {
@@ -219,6 +220,22 @@ namespace RestoreHarness
             Check("idempotent: '2 hours'", CanonicalizeInterval("2 hours") == "2 hours");
             // Non-interval text passes through untouched.
             Check("non-interval passes through", CanonicalizeInterval("not a time") == "not a time");
+            Console.WriteLine();
+        }
+
+        static void Test_MakeUniquePath()
+        {
+            Console.WriteLine("== MakeUniquePath (backup-name collision guard) ==");
+            var mi = SM("MakeUniquePath");
+            string dir = NewDir("uniq");
+            string p = Path.Combine(dir, "backup_250617120000.zip");
+            Check("free path returned unchanged", (string)mi.Invoke(null, new object[] { p }) == p);
+            File.WriteAllText(p, "x");
+            string r2 = (string)mi.Invoke(null, new object[] { p });
+            Check("existing path -> _2", r2 == Path.Combine(dir, "backup_250617120000_2.zip"), r2);
+            File.WriteAllText(r2, "x");
+            string r3 = (string)mi.Invoke(null, new object[] { p });
+            Check("_2 also exists -> _3", r3 == Path.Combine(dir, "backup_250617120000_3.zip"), r3);
             Console.WriteLine();
         }
 
