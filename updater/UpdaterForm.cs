@@ -199,16 +199,54 @@ namespace updater
 
         private bool VerifyVersionFile(string versionFilePath)
         {
-            // Implement the logic to verify the version file using a hash
-            // Placeholder for actual implementation
-            return true;
+            // run4: real check (was a return-true stub). The local version.txt must exist and parse as a version
+            // so we have a known current version before replacing anything.
+            try
+            {
+                return File.Exists(versionFilePath)
+                    && TryParseVersion(File.ReadAllText(versionFilePath).Trim(), out _);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private bool VerifyUpdatePackage(string packagePath)
         {
-            // Implement the logic to verify the update package using a cryptographic signature
-            // Placeholder for actual implementation
-            return true;
+            // run4: real integrity check (was a return-true stub). NOTE: this is NOT cryptographic authenticity —
+            // verifying the publisher's SIGNATURE would require a signing key Savedrake doesn't ship. The download
+            // is HTTPS from github.com (transport integrity + GitHub account trust); this additionally confirms the
+            // package is a well-formed Savedrake update for the version we resolved, which catches a corrupt /
+            // truncated download or a wrong/unexpected archive before it overwrites the install.
+            try
+            {
+                if (string.IsNullOrEmpty(packagePath) || !File.Exists(packagePath))
+                {
+                    return false;
+                }
+                using (ZipArchive archive = ZipFile.OpenRead(packagePath))
+                {
+                    // Must contain the application executable — i.e. it really is a Savedrake build. Match on the
+                    // leaf name (not the full path) so a future archive layout can't cause a false rejection.
+                    bool hasExe = archive.Entries.Any(en =>
+                        string.Equals(Path.GetFileName(en.FullName), "Savedrake.exe", StringComparison.OrdinalIgnoreCase));
+                    if (!hasExe)
+                    {
+                        return false;
+                    }
+
+                    // No version cross-check here: the download URL already targets the resolved release's
+                    // update.zip, so the package is for the right version by construction. (A naive System.Version
+                    // equality would also be wrong — the 3-part release tag "1.2.4" != the 4-part AssemblyVersion
+                    // "1.2.4.0" that the app writes into version.txt, which would reject every legitimate release.)
+                    return true;
+                }
+            }
+            catch
+            {
+                return false; // not a readable zip / IO error -> treat as failed verification
+            }
         }
 
 
@@ -229,7 +267,9 @@ namespace updater
             {
                 button3.Enabled=false;
                 button3.BackColor = System.Drawing.ColorTranslator.FromHtml("#f0f0f0");
-                Process.GetProcessesByName("Savedrake").ToList().ForEach(p => p.Kill());
+                // run4: do NOT kill the running app here — that previously happened BEFORE the download, so a
+                // failed/aborted download left the user with the app killed and no update. The kill now happens
+                // inside ApplyUpdateAsync only after the package is downloaded and verified, right before extract.
                 if (!IsAPIError)
                 {
                     await Task.Run(async () => {
@@ -320,15 +360,22 @@ namespace updater
 
             if (!VerifyVersionFile(Path.Combine(extractPath, "version.txt")))
             {
-                MessageBox.Show("The version file failed the integrity check.", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // run4: this method runs on a Task.Run pool thread, so marshal the dialog AND re-enable the button
+                // on the UI thread — otherwise the button stays stuck disabled with no way to retry but a restart.
+                if (this.IsHandleCreated)
+                {
+                    this.Invoke((MethodInvoker)(() =>
+                    {
+                        button3.Enabled = true;
+                        button3.BackColor = Color.White;
+                        MessageBox.Show("The version file failed the integrity check.", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }));
+                }
                 return;
             }
 
-            if (!VerifyUpdatePackage(tempDownloadPath))
-            {
-                MessageBox.Show("The update package failed the verification check.", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error );
-                return;
-            }
+            // run4: package verification moved to AFTER the download (it used to run here on a null tempDownloadPath,
+            // before the file was even fetched). See below, right after the download completes.
 
             
 
@@ -356,6 +403,23 @@ namespace updater
                     response.EnsureSuccessStatusCode();
                     byte[] updateBytes = await response.Content.ReadAsByteArrayAsync();
                     File.WriteAllBytes(tempDownloadPath, updateBytes);
+                }
+
+                // run4: verify the DOWNLOADED package before touching the install. Throw on failure so the existing
+                // catch shows the error and re-enables the button; the running app is NOT killed and nothing is
+                // extracted, leaving the user exactly where they were.
+                if (!VerifyUpdatePackage(tempDownloadPath))
+                {
+                    try { File.Delete(tempDownloadPath); } catch { }
+                    throw new Exception("The downloaded update package failed verification and was not installed.");
+                }
+
+                // run4: only now — with a verified package in hand — stop the running Savedrake so its files can be
+                // replaced (the extract below overwrites Savedrake.exe, which can't be replaced while it runs).
+                // WaitForExit so the OS releases the file locks before we extract over them.
+                foreach (Process p in Process.GetProcessesByName("Savedrake"))
+                {
+                    try { p.Kill(); p.WaitForExit(5000); } catch { }
                 }
 
                 // Compute the install root once, with a trailing separator, so the
@@ -408,11 +472,17 @@ namespace updater
             }
             catch (Exception ex)
             {
-                // Re-enable the Start Update button in case of failure
-                
-                button3.Enabled = true; // Re-enable the Start Update button
-                button3.BackColor = Color.White;
-                //progressBar1.Visible = false;
+                // run4: re-enable the button ON THE UI THREAD. ApplyUpdateAsync runs on a pool thread, so a bare
+                // button3.Enabled = true here threw a cross-thread InvalidOperationException that swallowed the
+                // error dialog below and left the button stuck disabled.
+                if (this.IsHandleCreated)
+                {
+                    this.Invoke((MethodInvoker)(() =>
+                    {
+                        button3.Enabled = true;
+                        button3.BackColor = Color.White;
+                    }));
+                }
 
                 // Show the error message to the user
                 if (!IsAPIError)
