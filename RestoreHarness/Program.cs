@@ -91,6 +91,7 @@ namespace RestoreHarness
                 Test_PreRestoreCheckpoint();   // P4: snapshot the live save before a restore so it isn't discarded
                 Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
+                Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
             }
             catch (Exception ex)
             {
@@ -364,6 +365,37 @@ namespace RestoreHarness
             bool noManifest = !Directory.Exists(Path.Combine(stage, "_savedrake")) && !File.Exists(Path.Combine(stage, "_savedrake", "manifest.json"));
             Check("restore extracts the save files", hasSaves);
             Check("restore skips the _savedrake manifest", noManifest);
+            Console.WriteLine();
+        }
+
+        static void Test_RestoreReverify()
+        {
+            // P1 read-side gate: a manifest-bearing backup that no longer matches its hashes is blocked before a
+            // restore touches the live saves; a legacy backup (no manifest) is never blocked. Both helpers are static.
+            Console.WriteLine("== Backup integrity: re-verify on restore (P1) ==");
+            var hasMan = SM("HasManifest");
+            var blocked = SM("RestoreBlockedByManifest");
+
+            string src = NewDir("rv_src");
+            File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("the-save"));
+            string manifest = (string)SM("BuildBackupManifest").Invoke(null, new object[] { src });
+
+            string good = Path.Combine(work, "rv_good.zip");
+            MakeZip(good, z => { z.AddDirectory(src); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+            string legacy = Path.Combine(work, "rv_legacy.zip");
+            MakeZip(legacy, z => { z.AddEntry("data000.bin", B("the-save")); }); // no manifest
+            string corrupt = Path.Combine(work, "rv_corrupt.zip");
+            MakeZip(corrupt, z => { z.AddEntry("data000.bin", B("TAMPERED!")); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+
+            Check("HasManifest true for a manifest backup", (bool)hasMan.Invoke(null, new object[] { good }));
+            Check("HasManifest false for a legacy backup", !(bool)hasMan.Invoke(null, new object[] { legacy }));
+
+            object[] g = { good, null };
+            Check("valid manifest backup -> NOT blocked", !(bool)blocked.Invoke(null, g) && g[1] == null, "reason=" + g[1]);
+            object[] l = { legacy, null };
+            Check("legacy backup -> NOT blocked", !(bool)blocked.Invoke(null, l) && l[1] == null, "reason=" + l[1]);
+            object[] c = { corrupt, null };
+            Check("on-disk corrupted manifest backup -> BLOCKED with reason", (bool)blocked.Invoke(null, c) && c[1] != null, "reason=" + c[1]);
             Console.WriteLine();
         }
 
