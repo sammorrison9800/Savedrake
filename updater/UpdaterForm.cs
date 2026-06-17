@@ -78,7 +78,10 @@ namespace updater
             // that 404s on Start Update. Leave downloadUrl null; ApplyUpdateAsync bails out cleanly on null.
             if (!string.IsNullOrEmpty(latestVersion))
             {
-                downloadUrl = Uri.EscapeUriString($"https://github.com/{Owner}/{Repo}/releases/download/{latestVersion}/update.zip");
+                // Escape only the variable version segment with Uri.EscapeDataString. Uri.EscapeUriString is obsolete
+                // and can corrupt a URL (it leaves some unsafe characters and can double-encode). Owner/Repo are fixed
+                // safe constants; latestVersion is the only runtime-variable path segment (a release tag, e.g. "1.3.0").
+                downloadUrl = $"https://github.com/{Owner}/{Repo}/releases/download/{Uri.EscapeDataString(latestVersion)}/update.zip";
             }
         }
 

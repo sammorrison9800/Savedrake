@@ -33,6 +33,11 @@ All notable changes to Savedrake are recorded here. The format is based on
   paths and your Steam ID redacted. Crashes that used to disappear silently are now caught
   and logged. Open the folder from Help > Open log folder. (#39)
 
+### Fixed
+- The updater builds its download URL with `Uri.EscapeDataString` on the version segment
+  instead of the obsolete `Uri.EscapeUriString` (which can corrupt URLs). No change for
+  normal version tags. (#40)
+
 ## [1.3.0] - 2026-06-17
 
 This release is a large batch of reliability and data-safety fixes on top of 1.2.4,
