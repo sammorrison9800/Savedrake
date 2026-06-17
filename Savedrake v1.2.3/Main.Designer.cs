@@ -47,9 +47,6 @@
             this.aboutToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.toolTip3 = new System.Windows.Forms.ToolTip(this.components);
             this.toolTip1 = new System.Windows.Forms.ToolTip(this.components);
-            this.deleteMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.renameMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.contextMenuStrip = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.textbox3 = new System.Windows.Forms.Label();
             this.Quit = new System.Windows.Forms.ToolStripMenuItem();
             this.Show = new System.Windows.Forms.ToolStripMenuItem();
@@ -78,7 +75,6 @@
             this.columnHeader2 = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.toolTip4 = new System.Windows.Forms.ToolTip(this.components);
             this.menuStrip1.SuspendLayout();
-            this.contextMenuStrip.SuspendLayout();
             this.contextMenuStrip1.SuspendLayout();
             this.statusStrip1.SuspendLayout();
             this.SuspendLayout();
@@ -220,28 +216,7 @@
             this.toolTip1.InitialDelay = 100;
             this.toolTip1.ReshowDelay = 20;
             this.toolTip1.ShowAlways = true;
-            // 
-            // deleteMenuItem
-            // 
-            this.deleteMenuItem.Name = "deleteMenuItem";
-            this.deleteMenuItem.Size = new System.Drawing.Size(117, 22);
-            this.deleteMenuItem.Text = "Delete";
-            // 
-            // renameMenuItem
-            // 
-            this.renameMenuItem.Name = "renameMenuItem";
-            this.renameMenuItem.Size = new System.Drawing.Size(117, 22);
-            this.renameMenuItem.Text = "Rename";
-            // 
-            // contextMenuStrip
-            // 
-            this.contextMenuStrip.ImageScalingSize = new System.Drawing.Size(28, 28);
-            this.contextMenuStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this.renameMenuItem,
-            this.deleteMenuItem});
-            this.contextMenuStrip.Name = "contextMenuStrip";
-            this.contextMenuStrip.Size = new System.Drawing.Size(118, 48);
-            // 
+            //
             // textbox3
             // 
             this.textbox3.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
@@ -600,7 +575,6 @@
             this.Load += new System.EventHandler(this.Main_Load);
             this.menuStrip1.ResumeLayout(false);
             this.menuStrip1.PerformLayout();
-            this.contextMenuStrip.ResumeLayout(false);
             this.contextMenuStrip1.ResumeLayout(false);
             this.statusStrip1.ResumeLayout(false);
             this.statusStrip1.PerformLayout();
@@ -615,9 +589,6 @@
         private System.Windows.Forms.ToolStripMenuItem helpToolStripMenuItem;
         private System.Windows.Forms.ToolTip toolTip3;
         private System.Windows.Forms.ToolTip toolTip1;
-        private System.Windows.Forms.ToolStripMenuItem deleteMenuItem;
-        private System.Windows.Forms.ToolStripMenuItem renameMenuItem;
-        private System.Windows.Forms.ContextMenuStrip contextMenuStrip;
         private System.Windows.Forms.Label textbox3;
         private System.Windows.Forms.ToolStripMenuItem Quit;
         private new System.Windows.Forms.ToolStripMenuItem Show;
