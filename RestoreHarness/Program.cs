@@ -90,6 +90,7 @@ namespace RestoreHarness
                 Test_MakeUniquePath();   // backup-name collision guard (timestamp backups no longer overwrite)
                 Test_PreRestoreCheckpoint();   // P4: snapshot the live save before a restore so it isn't discarded
                 Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
+                Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
             }
             catch (Exception ex)
             {
@@ -319,6 +320,50 @@ namespace RestoreHarness
             object[] a4 = { Path.Combine(work, "verify_missing.zip"), null };
             bool r4 = (bool)mi.Invoke(null, a4);
             Check("missing file -> rejected without throwing", !r4 && a4[1] != null, "reason=" + a4[1]);
+            Console.WriteLine();
+        }
+
+        static void Test_BackupManifest()
+        {
+            // P1 layer 2: backups carry an in-zip integrity manifest (path/length/sha256 per file). Verify catches a
+            // missing or corrupted file; restore must SKIP the manifest so it never lands in the live save folder.
+            Console.WriteLine("== Backup integrity: manifest verify (P1 layer 2) ==");
+            var build = SM("BuildBackupManifest");
+            var verify = SM("VerifyZipAgainstManifest");
+            var extract = IM("ExtractZipToStaging");
+
+            string src = NewDir("man_src");
+            File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("save-A-contents"));
+            File.WriteAllBytes(Path.Combine(src, "system.bin"), B("system-contents"));
+            string manifest = (string)build.Invoke(null, new object[] { src });
+            Check("manifest lists both source files", manifest.Contains("data000.bin") && manifest.Contains("system.bin"));
+
+            string good = Path.Combine(work, "man_good.zip");
+            MakeZip(good, z => { z.AddDirectory(src); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+            object[] a1 = { good, null };
+            Check("intact backup verifies against its manifest", (bool)verify.Invoke(null, a1) && a1[1] == null, "reason=" + a1[1]);
+
+            string missing = Path.Combine(work, "man_missing.zip");
+            MakeZip(missing, z => { z.AddEntry("data000.bin", B("save-A-contents")); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+            object[] a2 = { missing, null };
+            Check("missing declared file -> rejected", !(bool)verify.Invoke(null, a2) && a2[1] != null, "reason=" + a2[1]);
+
+            string tampered = Path.Combine(work, "man_tampered.zip");
+            MakeZip(tampered, z => { z.AddEntry("data000.bin", B("DIFFERENT-contents!")); z.AddEntry("system.bin", B("system-contents")); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
+            object[] a3 = { tampered, null };
+            Check("tampered file content -> rejected", !(bool)verify.Invoke(null, a3) && a3[1] != null, "reason=" + a3[1]);
+
+            string nomani = Path.Combine(work, "man_none.zip");
+            MakeZip(nomani, z => { z.AddEntry("data000.bin", B("x")); });
+            object[] a4 = { nomani, null };
+            Check("no manifest -> rejected", !(bool)verify.Invoke(null, a4) && a4[1] != null, "reason=" + a4[1]);
+
+            string stage = NewDir("man_stage");
+            extract.Invoke(inst, new object[] { good, stage });
+            bool hasSaves = File.Exists(Path.Combine(stage, "data000.bin")) && File.Exists(Path.Combine(stage, "system.bin"));
+            bool noManifest = !Directory.Exists(Path.Combine(stage, "_savedrake")) && !File.Exists(Path.Combine(stage, "_savedrake", "manifest.json"));
+            Check("restore extracts the save files", hasSaves);
+            Check("restore skips the _savedrake manifest", noManifest);
             Console.WriteLine();
         }
 

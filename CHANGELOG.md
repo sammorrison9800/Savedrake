@@ -16,6 +16,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   verified right after it is written, by expanding and checksum-checking every file inside
   it. A corrupt or unreadable backup is rejected with an error instead of being saved and
   only failing later when you try to restore it. (#35)
+- Backups now carry an internal integrity manifest (the list of save files with each one's
+  size and checksum). Every new backup is verified against it at creation, so a backup that
+  is missing a file or has silently corrupted is caught and rejected up front. The manifest
+  is metadata only and is never restored into your save folder. (#36)
 
 ## [1.3.0] - 2026-06-17
 

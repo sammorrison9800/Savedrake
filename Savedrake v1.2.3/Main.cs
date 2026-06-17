@@ -1543,13 +1543,17 @@ namespace Savedrake
                 {
                     Status.Text = "Backup started... Please wait.";
                     zip.AddDirectory(textbox1.Text); // Add the directory to the zip
+                    // Integrity manifest (P1 layer 2): record every source file's path/length/SHA-256 inside the zip
+                    // so we can prove on create (and re-check later) that the backup is complete and uncorrupted.
+                    zip.AddEntry(ManifestEntryName, System.Text.Encoding.UTF8.GetBytes(BuildBackupManifest(textbox1.Text)));
                     zip.Comment = "SamMorrison9800"; // This is the hidden comment
                     zip.Save(tempZip); // Save to the temp file first
                 }
-                // Verify-on-create (P1): a backup that fails CRC verification must never be published as if it were
-                // good. Reject it here (delete the temp, throw into the catch below) so the user is told now, while
-                // their live saves are untouched, instead of discovering it only at restore time.
-                if (!VerifyZipRestorable(tempZip, out string verifyReason))
+                // Verify-on-create: a backup that fails verification must never be published as if it were good. Reject
+                // it here (delete the temp, throw into the catch below) so the user is told now, while their live saves
+                // are untouched, instead of discovering it only at restore time. Layer 1 = CRC test-extract of every
+                // entry; layer 2 = every file present with the manifest's recorded length + SHA-256.
+                if (!VerifyZipRestorable(tempZip, out string verifyReason) || !VerifyZipAgainstManifest(tempZip, out verifyReason))
                 {
                     try { File.Delete(tempZip); } catch { }
                     throw new System.IO.IOException("the backup failed verification after writing (" + verifyReason + ")");
@@ -1612,6 +1616,89 @@ namespace Savedrake
                 reason = "the archive could not be verified: " + ex.Message;
                 return false;
             }
+        }
+
+        // Name of the integrity manifest written inside every new backup zip (P1 layer 2). Lives under a reserved
+        // "_savedrake" folder so the restore can recognise and SKIP it — it must never be extracted into the live save
+        // folder. Legacy backups made before this change simply have no manifest and are treated as unverified.
+        private const string ManifestEntryName = "_savedrake/manifest.json";
+
+        // True for any zip entry under Savedrake's reserved "_savedrake" metadata folder (the integrity manifest), at
+        // the archive root or under any nesting. Such entries are skipped on restore.
+        private static bool IsManifestEntry(string entryFileName)
+        {
+            string p = "/" + (entryFileName ?? "").Replace('\\', '/');
+            return p.IndexOf("/_savedrake/", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string Sha256Hex(System.IO.Stream content)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(content)).Replace("-", "").ToLowerInvariant();
+        }
+
+        // Build the integrity manifest for a backup: one record per source file (path relative to the save folder,
+        // byte length, SHA-256). Written inside the zip and verified against the zip's actual contents at creation, so
+        // a backup missing a file or with silent bit-rot is detected up front instead of only failing at restore time.
+        private static string BuildBackupManifest(string sourceDir)
+        {
+            string baseDir = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var files = new JArray();
+            foreach (string file in Directory.EnumerateFiles(baseDir, "*", SearchOption.AllDirectories))
+            {
+                string rel = Path.GetFullPath(file).Substring(baseDir.Length + 1).Replace('\\', '/');
+                string sha;
+                using (var fs = File.OpenRead(file)) sha = Sha256Hex(fs);
+                files.Add(new JObject { ["path"] = rel, ["length"] = new FileInfo(file).Length, ["sha256"] = sha });
+            }
+            return new JObject
+            {
+                ["manifestVersion"] = 1,
+                ["tool"] = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString(),
+                ["createdUtc"] = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+                ["files"] = files
+            }.ToString();
+        }
+
+        // Backup integrity verification, layer 2 (P1): confirm the freshly written archive contains every file the
+        // manifest declares, each with the recorded length + SHA-256. Catches a backup missing whole files (e.g. a zip
+        // truncated at an entry boundary, which the layer-1 CRC test-extract can miss) and per-file bit-rot. Returns
+        // false (with a reason) on any missing/mismatched file or a missing/garbled manifest.
+        private static bool VerifyZipAgainstManifest(string zipPath, out string reason)
+        {
+            reason = null;
+            try
+            {
+                using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipPath))
+                {
+                    Ionic.Zip.ZipEntry manifestEntry = zip.Entries.FirstOrDefault(e =>
+                        string.Equals(e.FileName.Replace('\\', '/'), ManifestEntryName, StringComparison.OrdinalIgnoreCase));
+                    if (manifestEntry == null) { reason = "the backup has no integrity manifest"; return false; }
+
+                    string json;
+                    using (var ms = new System.IO.MemoryStream()) { manifestEntry.Extract(ms); json = System.Text.Encoding.UTF8.GetString(ms.ToArray()); }
+                    JArray files = JObject.Parse(json)["files"] as JArray;
+                    if (files == null) { reason = "the integrity manifest is unreadable"; return false; }
+
+                    var byPath = zip.Entries.Where(e => !e.IsDirectory && !IsManifestEntry(e.FileName))
+                        .ToDictionary(e => e.FileName.Replace('\\', '/'), e => e, StringComparer.OrdinalIgnoreCase);
+
+                    foreach (JToken ft in files)
+                    {
+                        string rel = (string)ft["path"];
+                        if (rel == null || !byPath.TryGetValue(rel, out Ionic.Zip.ZipEntry e))
+                        { reason = "a file recorded in the manifest is missing from the backup: " + rel; return false; }
+                        if (e.UncompressedSize != (long)ft["length"])
+                        { reason = "a file's size does not match the manifest: " + rel; return false; }
+                        string actual;
+                        using (var ms = new System.IO.MemoryStream()) { e.Extract(ms); ms.Position = 0; actual = Sha256Hex(ms); }
+                        if (!string.Equals(actual, (string)ft["sha256"], StringComparison.OrdinalIgnoreCase))
+                        { reason = "a file's contents do not match the manifest (corrupt): " + rel; return false; }
+                    }
+                    return true;
+                }
+            }
+            catch (Exception ex) { reason = "the backup could not be verified against its manifest: " + ex.Message; return false; }
         }
 
 
@@ -1685,11 +1772,12 @@ namespace Savedrake
                 using (Ionic.Zip.ZipFile zip = new Ionic.Zip.ZipFile())
                 {
                     zip.AddDirectory(liveDir);
+                    zip.AddEntry(ManifestEntryName, System.Text.Encoding.UTF8.GetBytes(BuildBackupManifest(liveDir)));
                     zip.Comment = "SamMorrison9800";
                     zip.Save(tempZip);
                 }
-                // Verify-on-create (P1): don't trust a checkpoint we can't prove is restorable.
-                if (!VerifyZipRestorable(tempZip, out _))
+                // Verify-on-create (P1): don't trust a checkpoint we can't prove is restorable (CRC + manifest).
+                if (!VerifyZipRestorable(tempZip, out _) || !VerifyZipAgainstManifest(tempZip, out _))
                 {
                     try { File.Delete(tempZip); } catch { }
                     return false;
@@ -1925,6 +2013,9 @@ namespace Savedrake
                         throw new System.IO.IOException(
                             "Backup contains an unsafe path entry: '" + entry.FileName + "'. Restore aborted.");
                     if (entry.IsDirectory) continue;
+                    // Skip Savedrake's own integrity manifest — it lives inside the zip for verification but must NOT
+                    // be restored into the live save folder (it is metadata, not a game save file).
+                    if (IsManifestEntry(entry.FileName)) continue;
                     // Use ONLY this DotNetZip overload (same engine the old ExtractAll used). NOT OpenReader/stream-copy,
                     // NOT ExtractToFile (System.IO.Compression only). Ionic recreates parent subdirs automatically.
                     entry.Extract(stagingDir, Ionic.Zip.ExtractExistingFileAction.OverwriteSilently);
