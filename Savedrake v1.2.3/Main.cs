@@ -1026,10 +1026,8 @@ namespace Savedrake
                         if (backupCount < maxBackups)
                         {
                             BackupOperation(true); // Perform the backup operation
-                            backupCount++; // Increment the backup count
-
-                            // Write the updated count back to the file
-                            File.WriteAllText(countFilePath, backupCount.ToString());
+                            // No stale increment: LoadBackupHistory (via BackupOperation) already wrote the accurate
+                            // count from the files on disk; a failed backup must not advance the limit.
                         }
                         else
                         {
@@ -1140,10 +1138,10 @@ namespace Savedrake
                     if (backupCount < maxBackups)
                     {
                         BackupOperation(true); // Perform the backup operation
-                        backupCount++; // Increment the backup count
-
-                        // Write the updated count back to the file
-                        File.WriteAllText(countFilePath, backupCount.ToString());
+                        // Do NOT increment a stale local: BackupOperation -> LoadBackupHistory already recomputed
+                        // the count from the actual autobackup files on disk and wrote it to countFilePath. Writing
+                        // backupCount+1 here clobbered that recount AND advanced the limit even when the backup
+                        // FAILED (no file created). The next tick re-reads the accurate value.
                     }
                     else
                     {
@@ -1509,36 +1507,43 @@ namespace Savedrake
             else
             {
                 string autoPrefix = isAutoBackup ? "auto" : "";
-                backupFileName = Path.Combine(textbox2.Text, $"{autoPrefix}backup_{DateTime.Now:yyMMddHHmmss}.zip");
+                // Timestamp names are only second-resolution, so two backups in the same second would collide.
+                // The random-name branch already dedups (GenerateBackupFileName); make this branch unique too so a
+                // second same-second backup can't silently overwrite the first.
+                backupFileName = MakeUniquePath(Path.Combine(textbox2.Text, $"{autoPrefix}backup_{DateTime.Now:yyMMddHHmmss}.zip"));
             }
 
-
+            // Build the zip into a temp file in the SAME directory, then publish it with an atomic rename. A
+            // failure mid-Save (disk full, a source save file locked/removed) then leaves only the temp file
+            // (cleaned up below) — never a partial/corrupt .zip at the real backup path, and never an existing
+            // good backup overwritten by a truncated stub.
+            string tempZip = backupFileName + ".savedrake.tmp";
             try
             {
-                // Create a zip file of the directory specified in textbox1
+                // Sweep any orphaned temp files left by a previous backup that was hard-killed mid-write (a graceful
+                // failure cleans up via the catch below; a power-loss/kill can't). They're invisible to the *.zip
+                // listing/counter but still consume disk, so reclaim them here. Subsumes deleting our own tempZip.
+                try { foreach (string stale in Directory.GetFiles(textbox2.Text, "*.savedrake.tmp")) File.Delete(stale); } catch { }
                 using (Ionic.Zip.ZipFile zip = new Ionic.Zip.ZipFile())
                 {
                     Status.Text = "Backup started... Please wait.";
                     zip.AddDirectory(textbox1.Text); // Add the directory to the zip
                     zip.Comment = "SamMorrison9800"; // This is the hidden comment
-                    zip.Save(backupFileName); // Save the zip file
-                } //hmm - def related
-
-                // Update the ListView with the new backup entry
-                ListViewItem item = new ListViewItem(new[] { Path.GetFileName(backupFileName), DateTime.Now.ToString() });
-                //listView.Items.Add(item);
-                //listView.Sort();
+                    zip.Save(tempZip); // Save to the temp file first
+                }
+                File.Move(tempZip, backupFileName); // atomically publish the completed backup
 
                 // Update the status
                 LoadBackupHistory();
-                //listView.Sort();
                 Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully.";
-                PlaySoundFromResource(); //mustenable
+                PlaySoundFromResource();
             }
             catch (Exception ex)
             {
+                // Clean up the partial temp file so a failed backup leaves nothing behind.
+                try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
                 // If an error occurs, show an error message
-                PlaySoundFromResource2(); //mustenable
+                PlaySoundFromResource2();
                 if (checkbox_auto.Checked)
                 {
                     checkbox_auto.Checked = false;
@@ -1546,6 +1551,19 @@ namespace Savedrake
                 Status.Text = "Backup failed.";
                 MessageBox.Show($"An error occurred while creating the backup: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        // Returns fullPath if it is free, otherwise the first "name_N.ext" variant that does not exist.
+        private static string MakeUniquePath(string fullPath)
+        {
+            if (!File.Exists(fullPath)) return fullPath;
+            string dir = Path.GetDirectoryName(fullPath);
+            string name = Path.GetFileNameWithoutExtension(fullPath);
+            string ext = Path.GetExtension(fullPath);
+            int n = 2;
+            string candidate;
+            do { candidate = Path.Combine(dir, $"{name}_{n++}{ext}"); } while (File.Exists(candidate));
+            return candidate;
         }
 
 
@@ -1708,7 +1726,10 @@ namespace Savedrake
                 MoveDirContents(liveDir, rollbackDir);                     // T3 move live aside (same-volume rename)
                 stagingStarted = true;                                     // originals are all in rollbackDir now
                 MoveDirContents(stagingDir, liveDir);                      // T4 move staged into live
-                ClearReadOnlyRecursive(liveDir);                          // T5 strip ReadOnly (R2)
+                // T5 strip ReadOnly (R2). The restore is ALREADY committed here (staged saves are live), so this
+                // cosmetic post-step must never throw into the catch below and trigger a rollback of a good
+                // restore. Best-effort guard (ClearReadOnlyRecursive is itself non-throwing now too).
+                try { ClearReadOnlyRecursive(liveDir); } catch { }        // T5 strip ReadOnly (R2)
 
                 Status.Text = "Restore successful.";                       // T6 commit
                 MessageBox.Show("Restore successful.", "Information",
@@ -1889,14 +1910,29 @@ namespace Savedrake
                       dirInfo.Attributes &= ~FileAttributes.ReadOnly; }
             catch (UnauthorizedAccessException) { }
             catch (System.IO.IOException) { }
-            foreach (FileInfo fi in dirInfo.GetFiles("*", SearchOption.AllDirectories))
+
+            // The recursive enumerations below were the foreach collection expressions, OUTSIDE the per-item
+            // try/catch — and GetFiles/GetDirectories(AllDirectories) eagerly walk the whole tree, so a locked or
+            // permission-denied subdir threw straight out of this "best-effort" method. At the T5 call site that
+            // throw unwound into the rollback path and reverted an ALREADY-COMMITTED restore. Get the lists inside
+            // try/catch (empty on failure) so enumeration can never throw out of here.
+            FileInfo[] files;
+            try { files = dirInfo.GetFiles("*", SearchOption.AllDirectories); }
+            catch (UnauthorizedAccessException) { files = new FileInfo[0]; }
+            catch (System.IO.IOException) { files = new FileInfo[0]; }
+            foreach (FileInfo fi in files)
             {
                 try { if ((fi.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
                           fi.Attributes &= ~FileAttributes.ReadOnly; }
                 catch (UnauthorizedAccessException) { }
                 catch (System.IO.IOException) { }
             }
-            foreach (DirectoryInfo di in dirInfo.GetDirectories("*", SearchOption.AllDirectories))
+
+            DirectoryInfo[] dirs;
+            try { dirs = dirInfo.GetDirectories("*", SearchOption.AllDirectories); }
+            catch (UnauthorizedAccessException) { dirs = new DirectoryInfo[0]; }
+            catch (System.IO.IOException) { dirs = new DirectoryInfo[0]; }
+            foreach (DirectoryInfo di in dirs)
             {
                 try { if ((di.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
                           di.Attributes &= ~FileAttributes.ReadOnly; }
