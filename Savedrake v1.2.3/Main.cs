@@ -1191,7 +1191,7 @@ namespace Savedrake
             {
                 MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing
-                combobox_auto.SelectedIndex = 0;
+                if (combobox_auto.Items.Count > 0) combobox_auto.SelectedIndex = 0; // guard: empty list -> no reset (else ArgumentOutOfRangeException)
                 return;
             }
 
@@ -1200,7 +1200,7 @@ namespace Savedrake
             {
                 MessageBox.Show("The time interval cannot be less than 5 minutes.", "Invalid Time", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing
-                combobox_auto.SelectedIndex = 0;
+                if (combobox_auto.Items.Count > 0) combobox_auto.SelectedIndex = 0; // guard: empty list -> no reset (else ArgumentOutOfRangeException)
             }
         }
 
@@ -2378,46 +2378,68 @@ namespace Savedrake
         // Method to restore the deleted files
         private void RestoreDeletedFiles()
         {
-            Shell32.Shell shell = new Shell32.Shell();
-            Folder recycleBin = shell.NameSpace(10);
-            FolderItems items = recycleBin.Items();
-
-            foreach (string filePath in deletedFiles)
+            // Shell32 hands back COM objects (RCWs) that must be released, or their native shell handles linger
+            // until a GC happens to finalize them. Release each one (the per-item FolderItem every loop, and the
+            // Shell/Folder/FolderItems at the end) via Marshal.ReleaseComObject in a finally.
+            Shell32.Shell shell = null;
+            Folder recycleBin = null;
+            FolderItems items = null;
+            try
             {
-                for (int i = 0; i < items.Count; i++)
+                shell = new Shell32.Shell();
+                recycleBin = shell.NameSpace(10);
+                items = recycleBin.Items();
+
+                foreach (string filePath in deletedFiles)
                 {
-                    FolderItem fi = items.Item(i);
-                    string fileName = recycleBin.GetDetailsOf(fi, 0);
-                    if (Path.GetExtension(fileName) == "")
+                    for (int i = 0; i < items.Count; i++)
                     {
-                        fileName += Path.GetExtension(fi.Path); // Necessary for systems with hidden file extensions
-                    }
-                    string filePathInBin = recycleBin.GetDetailsOf(fi, 1);
-                    string fileOriginalPath = Path.Combine(filePathInBin, fileName);
-                    if (filePath == fileOriginalPath)
-                    {
-                        // Get the creation date of the file
-                        string fileCreationDate = recycleBin.GetDetailsOf(fi, 4);
-
-                        // Show file path and creation date
-                        Console.WriteLine($"Restoring: {fileOriginalPath} (Created: {fileCreationDate})");
-
-                        // Check if the file already exists at the original location
-                        if (File.Exists(fileOriginalPath))
+                        FolderItem fi = items.Item(i);
+                        try
                         {
-                            // Replace the file at the original location
-                            File.Delete(fileOriginalPath);
-                        }
+                            string fileName = recycleBin.GetDetailsOf(fi, 0);
+                            if (Path.GetExtension(fileName) == "")
+                            {
+                                fileName += Path.GetExtension(fi.Path); // Necessary for systems with hidden file extensions
+                            }
+                            string filePathInBin = recycleBin.GetDetailsOf(fi, 1);
+                            string fileOriginalPath = Path.Combine(filePathInBin, fileName);
+                            if (filePath == fileOriginalPath)
+                            {
+                                // Get the creation date of the file
+                                string fileCreationDate = recycleBin.GetDetailsOf(fi, 4);
 
-                        // Move the file from the Recycle Bin to the original location
-                        File.Move(fi.Path, fileOriginalPath);
-                        break;
+                                // Show file path and creation date
+                                Console.WriteLine($"Restoring: {fileOriginalPath} (Created: {fileCreationDate})");
+
+                                // Check if the file already exists at the original location
+                                if (File.Exists(fileOriginalPath))
+                                {
+                                    // Replace the file at the original location
+                                    File.Delete(fileOriginalPath);
+                                }
+
+                                // Move the file from the Recycle Bin to the original location
+                                File.Move(fi.Path, fileOriginalPath);
+                                break;
+                            }
+                        }
+                        finally
+                        {
+                            if (fi != null) Marshal.ReleaseComObject(fi);
+                        }
                     }
                 }
-            }
 
-            // Reset the record
-            deletedFiles.Clear();
+                // Reset the record
+                deletedFiles.Clear();
+            }
+            finally
+            {
+                if (items != null) Marshal.ReleaseComObject(items);
+                if (recycleBin != null) Marshal.ReleaseComObject(recycleBin);
+                if (shell != null) Marshal.ReleaseComObject(shell);
+            }
         }
 
         private void button_undo_Click(object sender, EventArgs e)
@@ -2517,37 +2539,34 @@ namespace Savedrake
         #region
         private void listView_MouseDoubleClick(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
+            if (e.Button != MouseButtons.Left) return;
+
+            // Capture FocusedItem once and guard for null — a double-click in empty list space (or below the last
+            // row) leaves FocusedItem null. The old code dereferenced it in the try (NRE) AND AGAIN in the catch
+            // (a second NRE thrown from inside the catch, which is unhandled → crash dialog).
+            ListViewItem focused = listView.FocusedItem;
+            if (focused == null || !focused.Bounds.Contains(e.Location)) return;
+
+            try
             {
-                try
-                {
-                    if (listView.FocusedItem.Bounds.Contains(e.Location))
-                    {
-                        // Assuming the full path of the file is stored in the Tag property
-                        string filePath = listView.FocusedItem.Tag.ToString();
-                        System.Diagnostics.Process.Start(filePath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    string filePath = listView.FocusedItem.Tag.ToString();
-                    MessageBox.Show("An error occurred while deleting the file(s): " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    LoadBackupHistory();
-                    SortComboBoxItems();
-                    //    listView.Sort(); //ARMA
-                }
+                // The full path of the file is stored in the Tag property
+                string filePath = focused.Tag.ToString();
+                System.Diagnostics.Process.Start(filePath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("An error occurred while opening the file: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LoadBackupHistory();
+                SortComboBoxItems();
             }
         }
 
         private void listView_MouseClick(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Right)
-            {
-                if (listView.FocusedItem != null && listView.FocusedItem.Bounds.Contains(e.Location))
-                {
-                    contextMenuStrip.Show(listView, e.Location);
-                }
-            }
+            // No manual context-menu Show here: the working menu (built in the constructor with wired Rename/Delete
+            // handlers) is assigned to listView.ContextMenuStrip and is shown AUTOMATICALLY by WinForms on
+            // right-click. The previous contextMenuStrip.Show(...) popped the SEPARATE designer-field menu whose
+            // Rename/Delete have no handlers — a dead, non-functional duplicate — so it has been removed.
         }
         #endregion
 
@@ -2995,6 +3014,10 @@ namespace Savedrake
             PlayBackupSound("error.wav");
         }
 
+        // One reusable SoundPlayer rather than a fresh (undisposed) instance per backup. Play() with SND_ASYNC
+        // replaces whatever it was playing, so swapping SoundLocation and reusing is correct and leak-free.
+        private SoundPlayer _backupSoundPlayer;
+
         // Plays a short feedback .wav that ships next to the executable (Content/CopyToOutputDirectory).
         // Resolved against the install dir (Application.StartupPath) rather than the current working directory,
         // so it works no matter how the app was launched, including from a read-only Program Files install.
@@ -3006,7 +3029,10 @@ namespace Savedrake
                 string path = Path.Combine(Application.StartupPath, wavFileName);
                 if (!File.Exists(path))
                     return;
-                new SoundPlayer(path).Play(); // async (SND_ASYNC); does not block the UI thread
+                if (_backupSoundPlayer == null)
+                    _backupSoundPlayer = new SoundPlayer();
+                _backupSoundPlayer.SoundLocation = path;
+                _backupSoundPlayer.Play(); // async (SND_ASYNC); does not block the UI thread
             }
             catch
             {
