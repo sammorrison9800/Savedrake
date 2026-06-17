@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Management;
@@ -718,15 +719,68 @@ namespace Savedrake
             SortComboBoxItems();
         }
 
+        // Single source of truth for interpreting an autobackup interval string, shared by validation,
+        // sorting, and timer setup so they can never disagree. Locale-robust by design:
+        //  - case-insensitive + CultureInvariant unit matching (no Turkish-I / casing surprises),
+        //  - tolerant grammar: optional surrounding whitespace, no space required before the unit, and
+        //    common synonyms/abbreviations ("min"/"mins"/"minute(s)", "hr"/"hrs"/"hour(s)"),
+        //  - the number is parsed with InvariantCulture over ASCII [0-9] only, so a non-US Windows
+        //    locale (different digit grouping / digit script) can't make int parsing throw or misread.
+        // Returns false (rather than throwing) for anything unrecognized or out of TimeSpan range.
+        private static readonly Regex IntervalRegex = new Regex(
+            @"^\s*(?<num>[0-9]+)\s*(?<unit>minutes|minute|mins|min|hours|hour|hrs|hr)\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+        private static bool TryParseInterval(string input, out TimeSpan interval)
+        {
+            interval = TimeSpan.Zero;
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            Match m = IntervalRegex.Match(input);
+            if (!m.Success)
+                return false;
+
+            // NumberStyles.None: the regex already isolated bare ASCII digits, so disallow sign/whitespace.
+            if (!int.TryParse(m.Groups["num"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int value))
+                return false; // too many digits to fit an int, etc.
+
+            bool isHours = m.Groups["unit"].Value.ToLowerInvariant()[0] == 'h';
+            try
+            {
+                interval = isHours ? TimeSpan.FromHours(value) : TimeSpan.FromMinutes(value);
+            }
+            catch (OverflowException)
+            {
+                interval = TimeSpan.Zero;
+                return false; // absurdly large value that overflows TimeSpan
+            }
+            return true;
+        }
+
+        // Canonical spelling for a recognized interval, PRESERVING the user's unit (no minutes<->hours
+        // conversion): "5min"/"5 Minutes"/"5  minutes" -> "5 minutes", "1 Hr" -> "1 hour", "2 hr" -> "2 hours".
+        // Lets the broadened input grammar collapse case/abbreviation/spacing variants onto a single list item
+        // instead of accumulating semantic duplicates. Returns the input unchanged if it isn't an interval.
+        private static string CanonicalizeInterval(string input)
+        {
+            Match m = IntervalRegex.Match(input ?? string.Empty);
+            if (!m.Success)
+                return input;
+            if (!int.TryParse(m.Groups["num"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int value))
+                return input;
+
+            bool isHours = m.Groups["unit"].Value.ToLowerInvariant()[0] == 'h';
+            if (isHours)
+                return value == 1 ? "1 hour" : value + " hours";
+            return value == 1 ? "1 minute" : value + " minutes";
+        }
+
         private TimeSpan ParseToTimeSpan(string s)
         {
-            int value = int.Parse(new string(s.Where(char.IsDigit).ToArray()));
-            if (s.Contains("min") || s.Contains("mins") || s.Contains("minutes"))
-                return TimeSpan.FromMinutes(value);
-            if (s.Contains("hour") || s.Contains("hours"))
-                return TimeSpan.FromHours(value);
-            // Add more conditions if there are other time units like "seconds", "days", etc.
-            return TimeSpan.Zero; // Default case
+            // Unrecognized items sort first (TimeSpan.Zero), matching the previous default-case behavior —
+            // but without throwing on malformed strings the way the old int.Parse did.
+            return TryParseInterval(s, out TimeSpan interval) ? interval : TimeSpan.Zero;
         }
 
         private void SortComboBoxItems()
@@ -768,6 +822,14 @@ namespace Savedrake
 
         private string ProcessText(string text)
         {
+            // Collapse case/abbreviation/spacing variants of a recognized interval onto one canonical spelling
+            // ("5min"/"5 Minutes" -> "5 minutes", "1 Hr" -> "1 hour"). Without this, the broadened input
+            // grammar accepted by combobox_auto_Validating would let those forms be added as permanent
+            // duplicate ComboBox items (persisted via ComboboxList). Units are preserved; non-interval text
+            // falls through to the legacy word-level normalization below.
+            if (IntervalRegex.IsMatch(text ?? string.Empty))
+                return CanonicalizeInterval(text);
+
             // Replace whole word "min" with "minutes"
             text = Regex.Replace(text, @"\bmin\b", "minutes");
 
@@ -1022,27 +1084,14 @@ namespace Savedrake
         private void SetAutoBackupInterval()
         {
             combobox_auto_Validating(combobox_auto, new System.ComponentModel.CancelEventArgs());
-            if (combobox_auto.SelectedItem != null)
+            // Drive the timer from the same parser that validated the input, so the milliseconds always
+            // match what the user saw — and so units/abbreviations stay consistent across the app. Using a
+            // TimeSpan avoids the old int*int milliseconds computation that could overflow on large values.
+            if (combobox_auto.SelectedItem != null
+                && TryParseInterval(combobox_auto.SelectedItem.ToString(), out TimeSpan interval)
+                && interval >= TimeSpan.FromMinutes(5))
             {
-                string interval = combobox_auto.SelectedItem.ToString();
-                int timeValue = 0; // Initialize timeValue to zero
-                int multiplier;
-
-                // Check if the interval is in hours or minutes
-                if (interval.ToLower().Contains("hour") || interval.ToLower().Contains("hours"))
-                {
-                    // Extract the number of hours and convert to milliseconds
-                    timeValue = int.Parse(interval.Split(' ')[0]);
-                    multiplier = 60 * 60 * 1000; // 1 hour = 60 minutes = 3600 seconds = 3600000 milliseconds
-                }
-                else
-                {
-                    // Extract the number of minutes and convert to milliseconds
-                    timeValue = int.Parse(interval.Split(' ')[0]);
-                    multiplier = 60 * 1000; // 1 minute = 60 seconds = 60000 milliseconds
-                }
-
-                autobackupTimer.Interval = timeValue * multiplier;
+                autobackupTimer.Interval = interval.TotalMilliseconds;
             }
             else
             {
@@ -1118,12 +1167,12 @@ namespace Savedrake
 
         private void combobox_auto_Validating(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            // Regular expression pattern to match "x min", "x hour", or "xx hours"
-            string pattern = @"^\d+\s(minutes|hour|hours)$";
             string input = combobox_auto.Text;
 
-            // Check if the input matches the pattern
-            if (!Regex.IsMatch(input, pattern))
+            // Accepts e.g. "12 minutes", "1 hour", "2 hours" — and now, case-insensitively and with flexible
+            // spacing, "12 Minutes", "5min", "1 Hr", "2 hrs". TryParseInterval is the same parser used to
+            // drive the timer and sort the list, so what validates here is exactly what those will accept.
+            if (!TryParseInterval(input, out TimeSpan interval))
             {
                 MessageBox.Show("Please enter the time in the correct format (e.g., '12 minutes', '1 hour', '2 hours').", "Invalid Format", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing
@@ -1131,23 +1180,8 @@ namespace Savedrake
                 return;
             }
 
-            // Parse the number from the input
-            int timeValue1 = int.Parse(Regex.Match(input, @"\d+").Value);
-            int timeValue2 = int.Parse(Regex.Match(input, @"\d+").Value);
-
-            // Convert hours to minutes
-            timeValue2 *= 60;
-
-            string timeUnit = Regex.Match(input, @"(minutes|hour|hours)").Value;
-
-            // Check if the time is less than 5 minutes
-            if ((timeUnit == "minutes") && timeValue1 < 5)
-            {
-                MessageBox.Show("The time interval cannot be less than 5 minutes.", "Invalid Time", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                e.Cancel = true; // Prevents focus from changing
-                combobox_auto.SelectedIndex = 0;
-            }
-            else if ((timeUnit == "hour" || timeUnit == "hours") && timeValue2 < 0.0833)
+            // Enforce the 5-minute floor uniformly, whether the interval was given in minutes or hours.
+            if (interval < TimeSpan.FromMinutes(5))
             {
                 MessageBox.Show("The time interval cannot be less than 5 minutes.", "Invalid Time", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 e.Cancel = true; // Prevents focus from changing

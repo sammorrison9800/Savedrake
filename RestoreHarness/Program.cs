@@ -84,6 +84,8 @@ namespace RestoreHarness
                 Test_HappyPathSequence();   // T1->T6 end-to-end at the file level using the real compiled helpers
                 Test_DataLoss_Repro();   // the critical one: proves/refutes the finally + Rollback behavior
                 Test_PartialT4_NoDataLoss();   // forces a partial T4 failure; asserts surviving originals == 2
+                Test_TryParseInterval();   // locale-tolerant autobackup-interval parser (single source of truth)
+                Test_CanonicalizeInterval();   // variant spellings collapse onto one item (no duplicate-item regression)
             }
             catch (Exception ex)
             {
@@ -123,6 +125,17 @@ namespace RestoreHarness
 
         static bool IsRealSaveEntry(string n) { return (bool)SM("IsRealSaveEntry").Invoke(null, new object[] { n }); }
 
+        // private static bool TryParseInterval(string, out TimeSpan) — read the out-param back from the args array.
+        static bool TryParseInterval(string input, out TimeSpan interval)
+        {
+            object[] a = { input, null };
+            bool ok = (bool)SM("TryParseInterval").Invoke(null, a);
+            interval = a[1] == null ? TimeSpan.Zero : (TimeSpan)a[1];
+            return ok;
+        }
+
+        static string CanonicalizeInterval(string input) { return (string)SM("CanonicalizeInterval").Invoke(null, new object[] { input }); }
+
         // ---- tests ----
         static void Test_IsRealSaveEntry()
         {
@@ -139,6 +152,72 @@ namespace RestoreHarness
             Check("notdata.bin is NOT save", !IsRealSaveEntry("notdata.bin"));
             Check("mydata000.bin is NOT save", !IsRealSaveEntry("mydata000.bin"));
             Check("datax.txtbin is NOT save", !IsRealSaveEntry("datax.txtbin"));
+            Console.WriteLine();
+        }
+
+        static void Test_TryParseInterval()
+        {
+            Console.WriteLine("== TryParseInterval (locale-tolerant) ==");
+
+            // Canonical forms still parse exactly as before.
+            Check("'5 minutes' -> 5 min", TryParseInterval("5 minutes", out var t1) && t1 == TimeSpan.FromMinutes(5));
+            Check("'1 hour' -> 60 min", TryParseInterval("1 hour", out var t2) && t2 == TimeSpan.FromHours(1));
+            Check("'2 hours' -> 120 min", TryParseInterval("2 hours", out var t3) && t3 == TimeSpan.FromHours(2));
+
+            // Case-insensitive (was rejected before: the old regex was case-sensitive).
+            Check("'5 Minutes' (case)", TryParseInterval("5 Minutes", out var t4) && t4 == TimeSpan.FromMinutes(5));
+            Check("'1 HOUR' (case)", TryParseInterval("1 HOUR", out var t5) && t5 == TimeSpan.FromHours(1));
+
+            // Whitespace tolerance (single-space-only was required before).
+            Check("'5  minutes' (2 spaces)", TryParseInterval("5  minutes", out var t6) && t6 == TimeSpan.FromMinutes(5));
+            Check("'5minutes' (no space)", TryParseInterval("5minutes", out var t7) && t7 == TimeSpan.FromMinutes(5));
+            Check("'  10 minutes  ' (padded)", TryParseInterval("  10 minutes  ", out var t8) && t8 == TimeSpan.FromMinutes(10));
+
+            // Synonyms / abbreviations.
+            Check("'30 min'", TryParseInterval("30 min", out var t9) && t9 == TimeSpan.FromMinutes(30));
+            Check("'30 mins'", TryParseInterval("30 mins", out var t10) && t10 == TimeSpan.FromMinutes(30));
+            Check("'1 minute'", TryParseInterval("1 minute", out var t11) && t11 == TimeSpan.FromMinutes(1));
+            Check("'2 hr'", TryParseInterval("2 hr", out var t12) && t12 == TimeSpan.FromHours(2));
+            Check("'3 hrs'", TryParseInterval("3 hrs", out var t13) && t13 == TimeSpan.FromHours(3));
+
+            // Rejections (return false, never throw).
+            Check("'' -> false", !TryParseInterval("", out _));
+            Check("null -> false", !TryParseInterval(null, out _));
+            Check("'abc' -> false", !TryParseInterval("abc", out _));
+            Check("'minutes' (no number) -> false", !TryParseInterval("minutes", out _));
+            Check("'5' (no unit) -> false", !TryParseInterval("5", out _));
+            Check("'5 seconds' (unknown unit) -> false", !TryParseInterval("5 seconds", out _));
+            Check("'5 days' (unknown unit) -> false", !TryParseInterval("5 days", out _));
+            Check("'5.5 minutes' (decimal) -> false", !TryParseInterval("5.5 minutes", out _));
+            Check("'-5 minutes' (sign) -> false", !TryParseInterval("-5 minutes", out _));
+
+            // Out-of-range values reject cleanly instead of throwing / overflowing (old int*int math).
+            Check("'999999999 hours' (TimeSpan overflow) -> false, no throw", !TryParseInterval("999999999 hours", out _));
+            Check("'99999999999 minutes' (> int) -> false", !TryParseInterval("99999999999 minutes", out _));
+
+            Console.WriteLine();
+        }
+
+        static void Test_CanonicalizeInterval()
+        {
+            // Guards the dedup fix: the broadened grammar accepts variant spellings, so they must canonicalize
+            // onto one item (e.g. built-in "5 minutes") rather than persist as duplicate ComboBox entries.
+            Console.WriteLine("== CanonicalizeInterval (collapse variants onto one canonical item) ==");
+            Check("'5min' -> '5 minutes'", CanonicalizeInterval("5min") == "5 minutes");
+            Check("'5 Minutes' -> '5 minutes'", CanonicalizeInterval("5 Minutes") == "5 minutes");
+            Check("'5  minutes' -> '5 minutes'", CanonicalizeInterval("5  minutes") == "5 minutes");
+            Check("'30 mins' -> '30 minutes'", CanonicalizeInterval("30 mins") == "30 minutes");
+            Check("'1 Hr' -> '1 hour'", CanonicalizeInterval("1 Hr") == "1 hour");
+            Check("'2 hr' -> '2 hours'", CanonicalizeInterval("2 hr") == "2 hours");
+            Check("'2 HOURS' -> '2 hours'", CanonicalizeInterval("2 HOURS") == "2 hours");
+            // Unit preserved (no minutes<->hours conversion), matching the prior app convention.
+            Check("'120 minutes' stays '120 minutes'", CanonicalizeInterval("120 minutes") == "120 minutes");
+            // Idempotent on the canonical/default forms so existing list items are never rewritten.
+            Check("idempotent: '5 minutes'", CanonicalizeInterval("5 minutes") == "5 minutes");
+            Check("idempotent: '1 hour'", CanonicalizeInterval("1 hour") == "1 hour");
+            Check("idempotent: '2 hours'", CanonicalizeInterval("2 hours") == "2 hours");
+            // Non-interval text passes through untouched.
+            Check("non-interval passes through", CanonicalizeInterval("not a time") == "not a time");
             Console.WriteLine();
         }
 
