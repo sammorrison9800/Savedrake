@@ -12,6 +12,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   no longer discards the save you currently have. The snapshot is exempt from the autobackup
   limit and is never auto-pruned; if it cannot be created you are asked whether to continue
   without it. (#34)
+- Backup integrity check on creation: every backup (and pre-restore checkpoint) is now
+  verified right after it is written, by expanding and checksum-checking every file inside
+  it. A corrupt or unreadable backup is rejected with an error instead of being saved and
+  only failing later when you try to restore it. (#35)
 
 ## [1.3.0] - 2026-06-17
 
