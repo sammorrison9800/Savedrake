@@ -2703,17 +2703,19 @@ namespace Savedrake
             bool updateAvailable = await CheckForUpdatesAsync();
             if (updateAvailable)
             {
-                try { Process.Start("Savedrake-Updater.exe"); }
+                // Resolve the updater next to THIS exe (install dir), not the process working directory — a bare
+                // relative name fails to launch when the app was started with a different CWD (e.g. a shortcut
+                // whose "Start in" differs), even though Savedrake-Updater.exe sits right beside Savedrake.exe.
+                try { Process.Start(Path.Combine(Application.StartupPath, "Savedrake-Updater.exe")); }
                 catch { MessageBox.Show("A new update is available. But Savedrake-Updater.exe could not be started. Make sure the file is present within Savedrake directory.", "Savedrake-Updater.exe Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-
-
             }
-            else
+            else if (!isLoading)
             {
-                if (!IsAPIError && !isLoading)
-                {
+                // Manual check (the startup check stays silent via isLoading): give feedback either way.
+                if (IsAPIError)
+                    MessageBox.Show("Could not check for updates. Please check your internet connection and try again.", "Update Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                else
                     MessageBox.Show("Your Savedrake is up to date.", "No Updates Available", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
             }
         }
 
@@ -2776,35 +2778,40 @@ namespace Savedrake
         private bool IsAPIError = false;
         private async Task<string> GetLatestVersionFromGit(string owner, string repo)
         {
+            IsAPIError = false; // reset per check, so a previous failure doesn't stick across re-checks
             string apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
 
             try
             {
                 using (HttpClient client = new HttpClient())
                 {
+                    client.Timeout = TimeSpan.FromSeconds(15); // a stalled connection must not hang the ~100s default
                     client.DefaultRequestHeaders.Add("User-Agent", "Savedrake Update Checker");
 
-                    HttpResponseMessage response = await client.GetAsync(apiUrl);
-                    response.EnsureSuccessStatusCode();
+                    using (HttpResponseMessage response = await client.GetAsync(apiUrl))
+                    {
+                        response.EnsureSuccessStatusCode();
 
-                    string responseBody = await response.Content.ReadAsStringAsync();
-                    JObject json = JObject.Parse(responseBody);
+                        string responseBody = await response.Content.ReadAsStringAsync();
+                        JObject json = JObject.Parse(responseBody);
 
-                    string tagName = json["tag_name"].ToString();
-                    return tagName;
+                        // Null-safe: a 200 whose JSON lacks tag_name returns null (no NRE) and is treated as
+                        // "no version found" -> "up to date" rather than an alarming error.
+                        return json.Value<string>("tag_name");
+                    }
                 }
             }
             catch (HttpRequestException)
             {
-                // Handle HTTP-specific exception with a MessageBox
-                
-                IsAPIError = true;
+                IsAPIError = true; // offline / DNS / refused
                 return null;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // Handle non-HTTP exceptions with a MessageBox
-                MessageBox.Show($"An unexpected error occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // Timeout (TaskCanceledException), JSON parse error, or any other transient failure: treat like a
+                // connectivity error. Do NOT pop a modal here — that fired even during the SILENT startup check;
+                // ExecuteUpdateProcess reports it only on the manual path (isLoading == false).
+                IsAPIError = true;
                 return null;
             }
         }
@@ -3012,16 +3019,12 @@ namespace Savedrake
             Application.Exit();
         }
 
-        private async Task checkForUpdateToolStripMenuItem_ClickAsync(object sender, EventArgs e)
+        private async void checkForUpdateToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            //CallToUpdateAsync();
+            // Run the in-app version check (shows "up to date" / "couldn't check", and launches the updater only
+            // when an update actually exists) instead of blindly launching the updater every time. isLoading is
+            // false here, so ExecuteUpdateProcess is allowed to show its result.
             await ExecuteUpdateProcess();
-
-        }
-
-        private void checkForUpdateToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            try { Process.Start("Savedrake-Updater.exe"); } catch { MessageBox.Show("Savedrake-Updater.exe could not be started. Make sure the file is present within Savedrake directory.", "Savedrake-Updater.exe Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
 
         private void fAQToolStripMenuItem_Click(object sender, EventArgs e)
