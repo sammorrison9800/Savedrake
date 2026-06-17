@@ -448,10 +448,28 @@ namespace Savedrake
 
             
 
+            // Serialize to a temp file in the same dir, then atomically swap it into place. StreamWriter opens
+            // the target with FileMode.Create (truncates to 0 first), so writing straight to SettingsFilePath
+            // meant a crash / full disk mid-serialize left the only settings copy empty or half-written — and
+            // SaveSettings runs from Main_FormClosing, a realistic force-kill window. With temp+replace, the
+            // previous good settings survive any failed write.
             var serializer = new XmlSerializer(typeof(AppSettings));
-            using (var writer = new StreamWriter(SettingsFilePath))
+            string tempPath = SettingsFilePath + ".tmp";
+            using (var writer = new StreamWriter(tempPath))
             {
                 serializer.Serialize(writer, settings);
+            }
+            try
+            {
+                if (File.Exists(SettingsFilePath))
+                    File.Replace(tempPath, SettingsFilePath, null); // atomic on NTFS; same volume (%APPDATA%)
+                else
+                    File.Move(tempPath, SettingsFilePath);           // first-ever write
+            }
+            catch
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { } // don't leave an orphan temp
+                throw; // preserve the original propagation (Main_FormClosing reports the save error)
             }
         }
 
@@ -3029,31 +3047,48 @@ namespace Savedrake
             DialogResult dialogResult = MessageBox.Show("This will reset all settings to default. Do you want to proceed?", "Reset Settings", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (dialogResult == DialogResult.Yes)
             {
-                try
-                {
-                    File.Delete(SettingsFilePath);
-                    File.Delete(UpdaterXmlPath);
-                    File.Delete(VersionFilePath);
-                    File.Delete(AutoBackupCountFilePath);
-                    // Also clear any legacy working-dir copies left behind by the COPY-based migration,
-                    // so the reset can't be silently undone by a fallback that still reads the old file.
-                    DeleteLegacyCopies("savedrake-updater.xml");
-                    DeleteLegacyCopies("version.txt");
-                    textbox1.Text = null;
-                    textbox2.Text = null;
-                    checkbox_auto.Checked = false;
-                    checkbox_hot.Checked = false;
-                    checkbox_tray.Checked = false;
-                    listView.Items.Clear();
-                    
-                }
-                catch
-                {
-                    //MessageBox.Show("An error occurred: " + ex.Message);
-                }
-                MessageBox.Show("Reset successful. Please restart Savedrake.", "Reset Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Environment.Exit(0);
+                // Stop autobackup first so a timer tick can't re-create count_of_autobackups.txt between the
+                // delete below and the exit (e.g. while the confirmation modal is up with the game running).
+                autobackupTimer?.Stop();
 
+                // Delete each %APPDATA% state file independently and track failures, so one locked file neither
+                // skips the others nor lets us falsely report success.
+                bool allDeleted = true;
+                foreach (string path in new[] { SettingsFilePath, UpdaterXmlPath, VersionFilePath, AutoBackupCountFilePath })
+                {
+                    try { if (File.Exists(path)) File.Delete(path); }
+                    catch { allDeleted = false; }
+                }
+                // Also clear any legacy working-dir copies left behind by the COPY-based migration, so the reset
+                // can't be silently undone by a fallback that still reads the old file. This now covers ALL FOUR
+                // migrated state files — previously only the updater xml + version were cleared, so a reset was
+                // silently reverted for settings + the autobackup count on the next launch.
+                DeleteLegacyCopies("savedrake_settings.xml");
+                DeleteLegacyCopies("count_of_autobackups.txt");
+                DeleteLegacyCopies("savedrake-updater.xml");
+                DeleteLegacyCopies("version.txt");
+
+                textbox1.Text = null;
+                textbox2.Text = null;
+                checkbox_auto.Checked = false;
+                checkbox_hot.Checked = false;
+                checkbox_tray.Checked = false;
+                listView.Items.Clear();
+
+                if (!allDeleted)
+                {
+                    // Be honest: at least one file couldn't be removed (in use / permission), so a restart would
+                    // bring the old settings back. Don't claim success or exit.
+                    MessageBox.Show("Some settings files could not be deleted (they may be in use). Close Savedrake and delete them from %APPDATA%\\Savedrake manually, or try again.", "Reset Incomplete", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                MessageBox.Show("Reset successful. Please restart Savedrake.", "Reset Settings", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // Dispose the tray icon before exiting so it doesn't ghost in the notification area. We keep
+                // Environment.Exit (NOT Application.Exit) on purpose: Application.Exit would fire Main_FormClosing
+                // -> SaveSettings and re-create the settings file we just deleted, undoing the reset.
+                try { trayIcon?.Dispose(); } catch { }
+                Environment.Exit(0);
             }
         }
 
