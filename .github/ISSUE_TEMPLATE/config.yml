@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or FAQ
+    url: https://github.com/sammorrison9800/Savedrake/blob/master/FAQ.md
+    about: Check the FAQ for common questions before opening an issue.
+  - name: Report a security issue
+    url: https://github.com/sammorrison9800/Savedrake/blob/master/SECURITY.md
+    about: Report security issues privately, not as a public issue.

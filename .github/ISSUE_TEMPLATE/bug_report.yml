@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a problem with Savedrake
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please update to the latest release and check the
+        [FAQ](https://github.com/sammorrison9800/Savedrake/blob/master/FAQ.md) first.
+  - type: input
+    id: version
+    attributes:
+      label: Savedrake version
+      description: Shown in the window title, for example 1.3.0.
+      placeholder: "1.3.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: List the steps so the problem can be reproduced.
+    validations:
+      required: false
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am on the latest release
+        - label: I checked the FAQ
