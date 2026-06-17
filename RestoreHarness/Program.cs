@@ -93,6 +93,7 @@ namespace RestoreHarness
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
+                Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
             }
             catch (Exception ex)
             {
@@ -424,6 +425,23 @@ namespace RestoreHarness
             string notzip = Path.Combine(work, "cls_notzip.zip");
             File.WriteAllBytes(notzip, B("not a zip at all"));
             Check("non-zip file -> Corrupt", (string)classify.Invoke(null, new object[] { notzip }) == "Corrupt");
+            Console.WriteLine();
+        }
+
+        static void Test_LogRedaction()
+        {
+            // P2: the logger must strip personal data before writing. Redact is a pure function (no side effects).
+            Console.WriteLine("== Logging: redaction (P2) ==");
+            Type logT = T.Assembly.GetType("Savedrake.Log");
+            Check("Savedrake.Log type exists", logT != null);
+            if (logT == null) { Console.WriteLine(); return; }
+            var redact = logT.GetMethod("Redact", BindingFlags.Public | BindingFlags.Static);
+            Check("Log.Redact(string) exists", redact != null);
+            if (redact == null) { Console.WriteLine(); return; }
+            string r1 = (string)redact.Invoke(null, new object[] { @"C:\Program Files (x86)\Steam\userdata\1696225205\2054970\remote\win64_save" });
+            Check("Steam account id is redacted", !r1.Contains("1696225205") && r1.Contains("<redacted>"), r1);
+            string r2 = (string)redact.Invoke(null, new object[] { "nothing sensitive here" });
+            Check("plain text is unchanged", r2 == "nothing sensitive here", r2);
             Console.WriteLine();
         }
 

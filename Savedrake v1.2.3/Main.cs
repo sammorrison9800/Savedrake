@@ -198,6 +198,15 @@ namespace Savedrake
 
             #endregion
 
+            // Help > Open log folder (P2): quick access to the diagnostic logs in %APPDATA%\Savedrake\Logs.
+            ToolStripMenuItem openLogFolderMenuItem = new ToolStripMenuItem("Open log folder");
+            openLogFolderMenuItem.Click += (s, e) =>
+            {
+                try { System.IO.Directory.CreateDirectory(Log.Directory()); System.Diagnostics.Process.Start("explorer.exe", Log.Directory()); }
+                catch (Exception ex) { Log.Error("Could not open log folder", ex); }
+            };
+            helpToolStripMenuItem.DropDownItems.Add(openLogFolderMenuItem);
+
             //tray
             #region
             // Initialize the NotifyIcon component
@@ -1584,9 +1593,11 @@ namespace Savedrake
                 LoadBackupHistory();
                 Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully.";
                 PlaySoundFromResource();
+                Log.Info("Backup created: " + Path.GetFileName(backupFileName) + (isAutoBackup ? " (auto)" : ""));
             }
             catch (Exception ex)
             {
+                Log.Error("Backup failed", ex);
                 // Clean up the partial temp file so a failed backup leaves nothing behind.
                 try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
                 // If an error occurs, show an error message
@@ -1955,6 +1966,7 @@ namespace Savedrake
         private bool RestoreTransactional(string filePath, string liveDir)
         {
             Status.Text = "Restore started... Please wait.";
+            Log.Info("Restore started from: " + Path.GetFileName(filePath));
             string stagingDir  = CreateSiblingTempDir(liveDir, "savedrake_stage");
             string rollbackDir = CreateSiblingTempDir(liveDir, "savedrake_rollback");
             bool stagingStarted = false; // true once T4 begins: live then holds disposable STAGED content, not originals
@@ -1976,6 +1988,7 @@ namespace Savedrake
                 try { ClearReadOnlyRecursive(liveDir); } catch { }        // T5 strip ReadOnly (R2)
 
                 Status.Text = "Restore successful.";                       // T6 commit
+                Log.Info("Restore successful from: " + Path.GetFileName(filePath));
                 MessageBox.Show("Restore successful.", "Information",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return true;
@@ -2000,6 +2013,7 @@ namespace Savedrake
         private bool HandleRestoreFailure(Exception ex, string rollbackDir, string liveDir, bool stagingStarted)
         {
             bool recovered = Rollback(liveDir, rollbackDir, stagingStarted);
+            Log.Error("Restore failed (recovered=" + recovered + ")", ex);
             Status.Text = recovered
                 ? "Restore failed. Your previous save files were restored."
                 : "Restore failed. See the dialog to recover your saves.";
