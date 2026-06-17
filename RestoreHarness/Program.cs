@@ -94,6 +94,7 @@ namespace RestoreHarness
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
+                Test_DiskPreflight();   // disk-space preflight helpers (size math + free-space check, fail-open)
             }
             catch (Exception ex)
             {
@@ -442,6 +443,40 @@ namespace RestoreHarness
             Check("Steam account id is redacted", !r1.Contains("1696225205") && r1.Contains("<redacted>"), r1);
             string r2 = (string)redact.Invoke(null, new object[] { "nothing sensitive here" });
             Check("plain text is unchanged", r2 == "nothing sensitive here", r2);
+            Console.WriteLine();
+        }
+
+        static void Test_DiskPreflight()
+        {
+            // Disk-space preflight helpers. GetDirectorySize / GetZipUncompressedSize are pure size math;
+            // HasFreeSpaceFor checks the volume and FAILS OPEN when the volume can't be determined.
+            Console.WriteLine("== Disk-space preflight ==");
+            var dirSize = SM("GetDirectorySize");
+            var zipSize = SM("GetZipUncompressedSize");
+            var hasSpace = SM("HasFreeSpaceFor");
+
+            string d = NewDir("ds");
+            File.WriteAllBytes(Path.Combine(d, "a.bin"), new byte[1000]);
+            File.WriteAllBytes(Path.Combine(d, "b.bin"), new byte[2500]);
+            long size = (long)dirSize.Invoke(null, new object[] { d });
+            Check("GetDirectorySize sums file lengths", size == 3500, "got " + size);
+
+            string z = Path.Combine(work, "ds.zip");
+            MakeZip(z, x => { x.AddEntry("data000.bin", new byte[4096]); x.AddEntry("system.bin", new byte[1024]); });
+            long unz = (long)zipSize.Invoke(null, new object[] { z });
+            Check("GetZipUncompressedSize sums uncompressed entry sizes", unz == 4096 + 1024, "got " + unz);
+
+            object[] a1 = { work, 0L, null };
+            bool r1 = (bool)hasSpace.Invoke(null, a1);
+            Check("0 bytes needed -> has space (true)", r1 && a1[2] == null);
+
+            object[] a2 = { work, long.MaxValue / 2, null };
+            bool r2 = (bool)hasSpace.Invoke(null, a2);
+            Check("absurd requirement -> false with reason", !r2 && a2[2] != null, "reason=" + a2[2]);
+
+            object[] a3 = { @"\\nonexistent-share-xyz\nope", 1000L, null };
+            bool r3 = (bool)hasSpace.Invoke(null, a3);
+            Check("undeterminable volume -> fails open (true)", r3);
             Console.WriteLine();
         }
 

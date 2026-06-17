@@ -32,6 +32,9 @@ All notable changes to Savedrake are recorded here. The format is based on
   file per day, the last 14 kept) recording key events and any unexpected error, with file
   paths and your Steam ID redacted. Crashes that used to disappear silently are now caught
   and logged. Open the folder from Help > Open log folder. (#39)
+- Disk-space preflight: before a backup or restore, Savedrake checks the target drive has room
+  (including the staging copy a restore needs) and refuses up front with a clear message instead
+  of failing partway through. A backup and a restore can also no longer overlap. (#41)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment

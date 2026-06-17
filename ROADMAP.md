@@ -1,7 +1,11 @@
 # Savedrake Roadmap
 
-> **Status:** planning only — nothing in this document is implemented yet.
-> The items here are *enhancements*, not bug fixes. The known defects were already fixed
+> **Status (updated 2026-06-17):** Most of Phase 1 (data-safety) plus the P2 logging item are now **implemented
+> on `master`** in PRs #34–#41: pre-restore safety checkpoint, verify-on-create, an in-zip integrity manifest,
+> re-verify on restore, the backup-integrity UI ("Validate all backups"), logging + global crash handling, the
+> `Uri.EscapeDataString` updater fix, and disk-space preflight + operation lock. **These are not yet released —
+> they ship at the next major release.** The remaining items below are not yet started.
+> The items here are *enhancements*, not bug fixes. The known defects were already fixed earlier
 > in PRs #13–#27 (transactional restore, hook/timer lifecycle, updater hardening, the full
 > code audit, and dead-code cleanup); the restore/update **core is considered solid** and
 > should be preserved.

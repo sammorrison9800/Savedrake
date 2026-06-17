@@ -42,6 +42,7 @@ namespace Savedrake
         #region
         private System.Timers.Timer autobackupTimer; //(Autobackup feature)
         private bool _autoBackupInProgress; // R7a: re-entrancy guard for OnAutobackupTimerElapsed (UI-thread only)
+        private bool _operationInProgress;  // operation lock: a backup or restore is mid-flight (UI-thread only)
         private bool isAutoBackupEnabled = false; //(Autobackup feature)
         private ManagementEventWatcher _watcher; //(Autobackup feature)
         private bool isGameRunning; //(Autobackup feature)
@@ -1557,11 +1558,28 @@ namespace Savedrake
                 backupFileName = MakeUniquePath(Path.Combine(textbox2.Text, $"{autoPrefix}backup_{DateTime.Now:yyMMddHHmmss}.zip"));
             }
 
+            // Disk-space preflight: refuse before writing if the backup volume can't hold the data (+ headroom). A
+            // disk-full mid-write only leaves a temp file (cleaned up below), but checking first avoids the wasted
+            // work and a confusing partial failure.
+            long sourceSize = GetDirectorySize(textbox1.Text);
+            if (!HasFreeSpaceFor(textbox2.Text, sourceSize, out string backupSpaceReason))
+            {
+                if (checkbox_auto.Checked) checkbox_auto.Checked = false;
+                Status.Text = "Backup skipped: low disk space.";
+                MessageBox.Show("Cannot create the backup: " + backupSpaceReason + ".", "Low Disk Space", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Operation lock: the UI thread serializes operations, but a modal dialog pumps the message queue, so a
+            // queued autobackup tick or click could otherwise re-enter while a backup/restore is mid-flight.
+            if (_operationInProgress) { Status.Text = "Please wait, another operation is already running."; return; }
+
             // Build the zip into a temp file in the SAME directory, then publish it with an atomic rename. A
             // failure mid-Save (disk full, a source save file locked/removed) then leaves only the temp file
             // (cleaned up below) — never a partial/corrupt .zip at the real backup path, and never an existing
             // good backup overwritten by a truncated stub.
             string tempZip = backupFileName + ".savedrake.tmp";
+            _operationInProgress = true;
             try
             {
                 // Sweep any orphaned temp files left by a previous backup that was hard-killed mid-write (a graceful
@@ -1609,6 +1627,7 @@ namespace Savedrake
                 Status.Text = "Backup failed.";
                 MessageBox.Show($"An error occurred while creating the backup: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            finally { _operationInProgress = false; }
         }
 
         // Returns fullPath if it is free, otherwise the first "name_N.ext" variant that does not exist.
@@ -1622,6 +1641,55 @@ namespace Savedrake
             string candidate;
             do { candidate = Path.Combine(dir, $"{name}_{n++}{ext}"); } while (File.Exists(candidate));
             return candidate;
+        }
+
+        // Disk-space preflight headroom: never plan an operation that would leave the volume essentially full.
+        private const long SafetyMarginBytes = 64L * 1024 * 1024; // 64 MB
+
+        // Total size of all files under a directory (recursive). Best-effort: unreadable files are skipped, not fatal.
+        private static long GetDirectorySize(string dir)
+        {
+            long total = 0;
+            try
+            {
+                foreach (string f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    try { total += new FileInfo(f).Length; } catch { }
+            }
+            catch { }
+            return total;
+        }
+
+        // Sum of the UNCOMPRESSED sizes of a zip's entries (read from the central directory; does not extract). This
+        // is how much space a restore's staging extraction needs on the save volume.
+        private static long GetZipUncompressedSize(string zipPath)
+        {
+            try
+            {
+                using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipPath))
+                    return zip.Entries.Where(e => !e.IsDirectory).Sum(e => e.UncompressedSize);
+            }
+            catch { return 0; }
+        }
+
+        // Disk-space preflight: is there room on targetDir's volume for requiredBytes plus a safety margin? Fails OPEN
+        // (returns true) if free space can't be determined (e.g. a network path), so a space-check error never blocks
+        // an otherwise-legitimate operation.
+        private static bool HasFreeSpaceFor(string targetDir, long requiredBytes, out string reason)
+        {
+            reason = null;
+            try
+            {
+                DriveInfo drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(targetDir)));
+                long needed = requiredBytes + SafetyMarginBytes;
+                if (drive.AvailableFreeSpace < needed)
+                {
+                    reason = "not enough free space on " + drive.Name + " (about " + (needed / (1024 * 1024)) +
+                             " MB needed, " + (drive.AvailableFreeSpace / (1024 * 1024)) + " MB free)";
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception) { return true; } // can't determine -> don't block a legitimate operation
         }
 
         // Backup integrity verification, layer 1 (P1): prove a freshly written archive is actually restorable before
@@ -1923,33 +1991,56 @@ namespace Savedrake
                     return;
                 }
 
-                // STEP 3b — pre-restore safety checkpoint (P4). RestoreTransactional deletes the current live save on
-                // success, so snapshot it first into a "(Pre-Restore)" backup the user can roll back to. If the
-                // snapshot can't be made, let the user decide rather than silently proceeding without a safety net.
-                Status.Text = "Creating pre-restore checkpoint...";
-                if (!CreatePreRestoreCheckpoint(textbox1.Text, textbox2.Text))
+                // STEP 3c — disk-space preflight: the restore extracts the backup into a staging folder on the save
+                // volume before swapping it in. Refuse up front if that volume can't hold it (+ headroom), with the
+                // live saves untouched, instead of failing partway through the extraction.
+                long restoreNeeded = GetZipUncompressedSize(filePath);
+                if (!HasFreeSpaceFor(textbox1.Text, restoreNeeded, out string restoreSpaceReason))
                 {
-                    DialogResult proceed = MessageBox.Show(
-                        "Savedrake could not create a safety snapshot of your current save before restoring.\n\n" +
-                        "If you continue, your current save will be replaced and its current state will be lost.\n\n" +
-                        "Restore anyway?",
-                        "Pre-Restore Checkpoint Failed", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-                    if (proceed != DialogResult.Yes) { Status.Text = "Restore cancelled."; return; }
+                    MessageBox.Show("Cannot restore: " + restoreSpaceReason + ".\n\nYour current save files have not been touched.",
+                        "Low Disk Space", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
                 }
 
-                // STEP 4 — delegate ALL destructive work (staging, swap, rollback, cleanup) to the transaction.
-                bool ok = RestoreTransactional(filePath, textbox1.Text);
-
-                // STEP 5 — post-success UI. Undo is DISABLED on success: old saves went to a temp dir, not the
-                // recycle bin, so a recycle-bin Undo would silently no-op. Honest = disable it.
-                if (ok)
+                // Operation lock: don't begin destructive restore work while a backup/restore is already running.
+                if (_operationInProgress)
                 {
-                    deletedFiles.Clear();
-                    UpdateUndoButtonState();
-                    LoadBackupHistory();
-                    SortComboBoxItems();
-                    listView.Sort();
+                    MessageBox.Show("Please wait, another operation is already running.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
+
+                _operationInProgress = true;
+                try
+                {
+                    // STEP 3b — pre-restore safety checkpoint (P4). RestoreTransactional deletes the current live save
+                    // on success, so snapshot it first into a "(Pre-Restore)" backup the user can roll back to. If the
+                    // snapshot can't be made, let the user decide rather than silently proceeding without a safety net.
+                    Status.Text = "Creating pre-restore checkpoint...";
+                    if (!CreatePreRestoreCheckpoint(textbox1.Text, textbox2.Text))
+                    {
+                        DialogResult proceed = MessageBox.Show(
+                            "Savedrake could not create a safety snapshot of your current save before restoring.\n\n" +
+                            "If you continue, your current save will be replaced and its current state will be lost.\n\n" +
+                            "Restore anyway?",
+                            "Pre-Restore Checkpoint Failed", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                        if (proceed != DialogResult.Yes) { Status.Text = "Restore cancelled."; return; }
+                    }
+
+                    // STEP 4 — delegate ALL destructive work (staging, swap, rollback, cleanup) to the transaction.
+                    bool ok = RestoreTransactional(filePath, textbox1.Text);
+
+                    // STEP 5 — post-success UI. Undo is DISABLED on success: old saves went to a temp dir, not the
+                    // recycle bin, so a recycle-bin Undo would silently no-op. Honest = disable it.
+                    if (ok)
+                    {
+                        deletedFiles.Clear();
+                        UpdateUndoButtonState();
+                        LoadBackupHistory();
+                        SortComboBoxItems();
+                        listView.Sort();
+                    }
+                }
+                finally { _operationInProgress = false; }
             }
             else if (listView.SelectedItems.Count > 1)
             {
