@@ -1,10 +1,10 @@
                                                                 
                                                                    
-# Savedrake v1.2.4 | Easy Save Game Manager for Dragon's Dogma 2
+# Savedrake v1.3.0 | Easy Save Game Manager for Dragon's Dogma 2
 
 ## Introduction
 
-Savedrake v1.2.4 is an open-source, user-friendly, and intuitive save game manager for Dragon's Dogma 2. It simplifies the process of backing up and restoring your game saves, ensuring that your progress is always secure.
+Savedrake v1.3.0 is an open-source, user-friendly, and intuitive save game manager for Dragon's Dogma 2. It simplifies the process of backing up and restoring your game saves, ensuring that your progress is always secure.
 
 ## Features
 

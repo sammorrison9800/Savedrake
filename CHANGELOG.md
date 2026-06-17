@@ -1,0 +1,64 @@
+# Changelog
+
+All notable changes to Savedrake are recorded here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
+[Semantic Versioning](https://semver.org/).
+
+## [1.3.0] - 2026-06-17
+
+This release is a large batch of reliability and data-safety fixes on top of 1.2.4,
+plus a few small features. The backup and restore flows are now transactional, and
+the auto-updater installs updates safely with rollback.
+
+### Added
+- Settings, the version file, and updater data are now stored in
+  `%APPDATA%\Savedrake`, so they save correctly even when Savedrake is installed in a
+  read-only folder such as Program Files. Existing files are migrated automatically. (#18)
+- Backup success and error sounds now play for every backup (manual, hotkey, and
+  autobackup), not only hotkey backups. (#20)
+- A restore regression test that runs in CI on every change. (#13)
+- `ROADMAP.md` describing planned work, and this `CHANGELOG.md`. (#28)
+
+### Changed
+- Restore is now transactional. It extracts the backup to a staging area, checks it
+  contains save data, swaps it into place, and rolls back automatically if any step
+  fails, so a failed restore can no longer leave your saves half-replaced. (#13)
+- The auto-updater installs updates transactionally. It downloads and verifies the
+  package first, then replaces files one at a time while keeping a backup of each,
+  rolls back on any failure, and relaunches the app. (#17, #21)
+- Autobackup intervals accept more input. Entries like "5 min", "1 Hr", and "2 hrs"
+  are now valid, and parsing no longer depends on your Windows display language. (#19)
+- "Check for Updates" now runs an in-app version check and tells you when you are
+  already up to date, instead of always launching the updater. (#24)
+
+### Fixed
+- Data loss: a failed restore could delete the only copy of your saves while trying to
+  recover. Restore now keeps your originals until the new save is provably in place. (#13)
+- A timestamped backup could overwrite an existing backup made in the same second.
+  Backup names are now made unique. (#22)
+- A backup interrupted partway through could leave a corrupt `.zip`. Backups are now
+  written to a temporary file and renamed into place only after they finish. (#22)
+- The autobackup limit counter no longer drifts. A failed backup no longer counts
+  toward the limit, and the count tracks the real number of backups on disk. (#22)
+- Settings could be corrupted if the app was closed while saving them. Settings are now
+  written atomically. (#23)
+- "Restore Default" now clears all settings reliably and reports if a file could not be
+  removed, instead of always claiming success. (#23)
+- The global hotkey and the autobackup timer are now set up and cleaned up correctly
+  across the app's lifetime. (#14, #16)
+- Fixed several crashes: an empty interval list, a double-click in empty space in the
+  backup list, and a stale right-click menu. (#25)
+- Combobox selection and backup listing handle more edge cases. (#15)
+- The updater is launched by its full path, and the update check no longer hangs or
+  shows an unexpected error when you are offline. (#24)
+- Fixed resource leaks in the sound player and the recycle-bin undo. (#25)
+
+### Removed
+- Dead code and unused files left over from earlier versions. (#26, #27)
+
+## [1.2.4] - 2024-05-10
+
+Previous release. Earlier history is not tracked in this file.
+
+[1.3.0]: https://github.com/sammorrison9800/Savedrake/compare/1.2.4...1.3.0
+[1.2.4]: https://github.com/sammorrison9800/Savedrake/releases/tag/1.2.4

@@ -195,7 +195,7 @@ namespace Savedrake
             trayIcon.Icon = this.Icon; // Set the icon
             trayIcon.Visible = false; // Hide the icon initially
             trayIcon.DoubleClick += TrayIcon_DoubleClick; // Event handler for double-clicking the icon
-            trayIcon.Text = "Savedrake v1.2.4";
+            trayIcon.Text = "Savedrake v1.3.0";
             // Initialize the ContextMenuStrip
             trayMenu = new ContextMenuStrip();
             ToolStripMenuItem showItem = new ToolStripMenuItem("Show");
