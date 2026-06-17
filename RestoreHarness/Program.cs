@@ -86,6 +86,7 @@ namespace RestoreHarness
                 Test_PartialT4_NoDataLoss();   // forces a partial T4 failure; asserts surviving originals == 2
                 Test_TryParseInterval();   // locale-tolerant autobackup-interval parser (single source of truth)
                 Test_CanonicalizeInterval();   // variant spellings collapse onto one item (no duplicate-item regression)
+                Test_SoundAssetsShipped();   // success.wav / error.wav must ship next to Savedrake.exe
             }
             catch (Exception ex)
             {
@@ -218,6 +219,30 @@ namespace RestoreHarness
             Check("idempotent: '2 hours'", CanonicalizeInterval("2 hours") == "2 hours");
             // Non-interval text passes through untouched.
             Check("non-interval passes through", CanonicalizeInterval("not a time") == "not a time");
+            Console.WriteLine();
+        }
+
+        static void Test_SoundAssetsShipped()
+        {
+            // PlayBackupSound resolves success.wav/error.wav from Application.StartupPath (the exe dir), so the
+            // build must copy them there (Content + CopyToOutputDirectory). Guard against the csproj items being
+            // dropped, which would silently kill all backup feedback sounds.
+            Console.WriteLine("== Sound assets shipped next to Savedrake.exe ==");
+            string dir = Path.GetDirectoryName(T.Assembly.Location);
+            foreach (string wav in new[] { "success.wav", "error.wav" })
+            {
+                string p = Path.Combine(dir, wav);
+                bool exists = File.Exists(p);
+                Check(wav + " present in build output", exists, p);
+                if (exists)
+                {
+                    byte[] head = new byte[12];
+                    using (var fs = File.OpenRead(p)) { fs.Read(head, 0, 12); }
+                    bool riffWave = head[0] == (byte)'R' && head[1] == (byte)'I' && head[2] == (byte)'F' && head[3] == (byte)'F'
+                                 && head[8] == (byte)'W' && head[9] == (byte)'A' && head[10] == (byte)'V' && head[11] == (byte)'E';
+                    Check(wav + " is a valid RIFF/WAVE file", riffWave);
+                }
+            }
             Console.WriteLine();
         }
 
