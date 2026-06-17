@@ -28,6 +28,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   checksum manifest and "Legacy" for older ones. A new right-click "Validate all backups"
   action runs a full check and marks each backup Validated, Legacy, or Corrupt, so you can
   find a bad backup before you ever need it. (#38)
+- Diagnostic logging: Savedrake now writes a rolling log to `%APPDATA%\Savedrake\Logs` (one
+  file per day, the last 14 kept) recording key events and any unexpected error, with file
+  paths and your Steam ID redacted. Crashes that used to disappear silently are now caught
+  and logged. Open the folder from Help > Open log folder. (#39)
 
 ## [1.3.0] - 2026-06-17
 
