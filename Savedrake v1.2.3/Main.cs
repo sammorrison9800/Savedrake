@@ -185,7 +185,6 @@ namespace Savedrake
             listView.AfterLabelEdit += listView_AfterLabelEdit;
             listView.ContextMenuStrip = contextMenuStrip;
             listView.KeyDown += ListView_KeyDown;
-            listView.ItemSelectionChanged += ListView_ItemSelectionChanged;
 
             #endregion
 
@@ -2628,12 +2627,6 @@ namespace Savedrake
 
         //Listview Keydown //Undetected
         #region
-        private void ListView_ItemSelectionChanged(object sender, ListViewItemSelectionChangedEventArgs e)
-        {
-            // Enable the renameMenuItem only if exactly one item is selected
-            renameMenuItem.Enabled = listView.SelectedItems.Count == 1;
-        }
-
         private void ListView_KeyDown(object sender, KeyEventArgs e)
         {
             // Check if the 'Del' key is pressed and items are selected
