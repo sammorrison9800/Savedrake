@@ -20,6 +20,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   size and checksum). Every new backup is verified against it at creation, so a backup that
   is missing a file or has silently corrupted is caught and rejected up front. The manifest
   is metadata only and is never restored into your save folder. (#36)
+- Restore now re-checks a backup against its integrity manifest before replacing your live
+  save, so a backup that has corrupted on disk since it was created is caught and the restore
+  is refused with your current save left untouched. Older backups without a manifest are
+  unaffected. (#37)
 
 ## [1.3.0] - 2026-06-17
 

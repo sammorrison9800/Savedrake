@@ -1701,6 +1701,29 @@ namespace Savedrake
             catch (Exception ex) { reason = "the backup could not be verified against its manifest: " + ex.Message; return false; }
         }
 
+        // True if the backup zip carries an integrity manifest. Cheap: reads the zip directory only, does not hash.
+        private static bool HasManifest(string zipPath)
+        {
+            try
+            {
+                using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipPath))
+                    return zip.Entries.Any(e => string.Equals(e.FileName.Replace('\\', '/'), ManifestEntryName, StringComparison.OrdinalIgnoreCase));
+            }
+            catch { return false; }
+        }
+
+        // Read-side integrity gate for restore (P1): returns true if the restore should be BLOCKED because the backup
+        // carries a manifest that no longer matches its contents — i.e. the backup has corrupted on disk since it was
+        // created. Legacy backups (no manifest, made before this feature) are never blocked here, so old backups keep
+        // restoring exactly as before. Static + file-path-only so the headless harness can test the decision.
+        private static bool RestoreBlockedByManifest(string zipPath, out string reason)
+        {
+            reason = null;
+            if (!HasManifest(zipPath)) return false;                                        // legacy backup -> not gated
+            if (VerifyZipAgainstManifest(zipPath, out reason)) { reason = null; return false; } // matches -> allowed
+            return true;                                                                    // manifest mismatch -> block
+        }
+
 
         // Helper method to generate a unique backup file name
         private string GenerateBackupFileName(bool isAutoBackup)
@@ -1844,6 +1867,17 @@ namespace Savedrake
                 if (!ValidateBackup(filePath, out string reason))
                 {
                     MessageBox.Show(reason + "\n\nYour current save files have not been touched.",
+                        "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // STEP 3a — re-verify a manifest-bearing backup against its recorded hashes before touching live saves
+                // (P1). Catches a backup that has bit-rotted on disk since it was created. Legacy backups without a
+                // manifest are unaffected and restore as before.
+                if (RestoreBlockedByManifest(filePath, out string integrityReason))
+                {
+                    MessageBox.Show("This backup failed its integrity check (" + integrityReason + ").\n\n" +
+                        "Your current save files have not been touched.",
                         "Restore Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
