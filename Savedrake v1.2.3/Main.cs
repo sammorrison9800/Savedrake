@@ -120,7 +120,6 @@ namespace Savedrake
 
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
-        private bool _isUsingHotkey = false;
         private readonly object _syncLock = new object();
         private volatile bool _isRecordingHotkey = false;
         private volatile bool _controlPressed = false;
@@ -1487,8 +1486,10 @@ namespace Savedrake
             // Check if the backup directory exists, if not, prompt to create it
             if (!Directory.Exists(textbox2.Text))
             {
-                if (_isUsingHotkey) { PlaySoundFromResource2(); }
-
+                // No sound here: a missing-but-creatable folder is a prompt, not a failure. The error sound is
+                // reserved for an actual backup failure (the catch below); success plays its own sound once the
+                // backup completes. (Previously this chimed error.wav, which — now that sound is no longer
+                // hotkey-gated — produced a misleading error-then-success double sound on a successful backup.)
                 DialogResult dialogResult = MessageBox.Show("The backup location does not exist. Would you like to create it?", "Create Directory", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (dialogResult == DialogResult.Yes)
                 {
@@ -2033,11 +2034,8 @@ namespace Savedrake
 
         private void MsgWindow_HotkeyPressed(object sender, EventArgs e)
         {
-            // Call your desired function
-            _isUsingHotkey = true;
+            // Trigger a manual backup; the feedback sound now plays for all backup paths (see PlayBackupSound).
             BackupOperation(false);
-
-
         }
 
         private string GetHotkeyString()
@@ -2925,43 +2923,34 @@ namespace Savedrake
         #endregion
 
         //Sounds
+        // Success/error feedback now plays for EVERY backup (manual button, hotkey, and autobackup), not just
+        // hotkey-triggered ones — the old _isUsingHotkey gate has been removed.
         public void PlaySoundFromResource()
         {
-            try
-            {
-                SoundPlayer player = new SoundPlayer("success.wav");
-                if (_isUsingHotkey == true)
-                {
-                    // Load the .wav file from resources
-
-
-                    // Play the .wav file
-                    player.Play();
-                    _isUsingHotkey = false;
-                }
-                return;
-            }
-            catch { }
+            PlayBackupSound("success.wav");
         }
         public void PlaySoundFromResource2()
         {
+            PlayBackupSound("error.wav");
+        }
 
+        // Plays a short feedback .wav that ships next to the executable (Content/CopyToOutputDirectory).
+        // Resolved against the install dir (Application.StartupPath) rather than the current working directory,
+        // so it works no matter how the app was launched, including from a read-only Program Files install.
+        // Best-effort: a missing file or any audio/IO error must never disrupt or fail a backup.
+        private void PlayBackupSound(string wavFileName)
+        {
             try
             {
-                SoundPlayer player = new SoundPlayer("error.wav");
-                if (_isUsingHotkey == true)
-                {
-                    // Load the .wav file from resources
-
-
-                    // Play the .wav file
-                    player.Play();
-                    _isUsingHotkey = false;
-                }
-                return;
+                string path = Path.Combine(Application.StartupPath, wavFileName);
+                if (!File.Exists(path))
+                    return;
+                new SoundPlayer(path).Play(); // async (SND_ASYNC); does not block the UI thread
             }
-            catch { }
-
+            catch
+            {
+                // Sound is non-essential; swallow any audio/IO failure.
+            }
         }
 
         private void exitToolStripMenuItem_Click(object sender, EventArgs e)
