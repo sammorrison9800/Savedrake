@@ -23,4 +23,11 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
+  <!-- Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile is how auto-cleanup sends thinned autobackups to the
+       Recycle Bin (matches the shipped app). It is a framework assembly on net48 but a class library does not
+       reference it by default, so name it explicitly. -->
+  <ItemGroup>
+    <Reference Include="Microsoft.VisualBasic" />
+  </ItemGroup>
+
 </Project>

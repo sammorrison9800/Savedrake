@@ -136,6 +136,10 @@ namespace RestoreHarness
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
                 Test_DiskPreflight();   // disk-space preflight helpers (size math + free-space check, fail-open)
                 Test_RestoreServiceFlow();   // Phase 4a: the REAL Core RestoreService.Restore orchestration end-to-end
+                Test_AutobackupPolicy();   // Phase 5: the change-aware autobackup decision (every branch + game-start bypass)
+                Test_AutobackupCountStore();   // Phase 5: forgiving read of the autobackup count file (missing/garbled -> 0)
+                Test_AutobackupCleanup();   // Phase 5: auto-thinning excludes manual/pre-restore/pinned, removes surplus autos
+                Test_GameDetect();   // Phase 5: DD2 running-state registry read returns a bool and never throws
             }
             catch (Exception ex)
             {
@@ -816,6 +820,122 @@ namespace RestoreHarness
             Check("RestoreService: the Steam-Cloud confirm was prompted", dialog.Confirms.Count >= 1, "confirms=" + dialog.Confirms.Count);
             Check("RestoreService: a success Info dialog was shown", dialog.Infos.Count >= 1, "infos=" + string.Join(" ;; ", dialog.Infos));
             Check("RestoreService: no Warning dialog on the happy path", dialog.Warns.Count == 0, "warns=" + string.Join(" ;; ", dialog.Warns));
+            Console.WriteLine();
+        }
+
+        static void Test_AutobackupPolicy()
+        {
+            // Phase 5: AutobackupPolicy.Decide is the whole change-aware autobackup decision as one pure function.
+            // It must reproduce the shipped RunChangeAwareAutobackup / OnGameStatusChanged tree exactly, including the
+            // ordering (game first, then limit, then the change gate) and the game-start bypass that lets the first
+            // backup of a session always fire.
+            Console.WriteLine("== Phase 5: change-aware autobackup decision ==");
+            Func<bool, bool, int, int, bool, string, string, bool, AutobackupAction> D = AutobackupPolicy.Decide;
+
+            // 1. Game not running wins over everything else (even an invalid limit / a hit cap).
+            Check("game not running -> pause", D(false, false, 99, 1, false, null, null, false) == AutobackupAction.PauseGameNotRunning);
+            Check("game not running -> pause even at game-start bypass", D(false, true, 0, 10, true, "fp", null, true) == AutobackupAction.PauseGameNotRunning);
+
+            // 2. Invalid limit field (only checked once the game is running).
+            Check("invalid limit -> InvalidLimit", D(true, false, 0, 0, false, "fp", null, false) == AutobackupAction.InvalidLimit);
+
+            // 3. Limit reached with cleanup off -> stop; with cleanup on -> keep going.
+            Check("count == limit, cleanup off -> LimitReached", D(true, true, 5, 5, false, "fp", null, false) == AutobackupAction.LimitReached);
+            Check("count over limit, cleanup off -> LimitReached", D(true, true, 9, 5, false, "fp", null, false) == AutobackupAction.LimitReached);
+            Check("count == limit, cleanup ON -> proceeds (DoBackup)", D(true, true, 5, 5, true, "fp", null, false) == AutobackupAction.DoBackup);
+            Check("count below limit -> proceeds", D(true, true, 4, 5, false, "new", "old", false) == AutobackupAction.DoBackup);
+
+            // 4. The change gate (only on the timer/watcher path, i.e. bypass = false).
+            Check("null fingerprint -> SkipNotReady (fail closed)", D(true, true, 0, 5, false, null, "old", false) == AutobackupAction.SkipNotReady);
+            Check("fingerprint unchanged -> SkipNoChange", D(true, true, 0, 5, false, "same", "same", false) == AutobackupAction.SkipNoChange);
+            Check("null baseline never skips -> DoBackup", D(true, true, 0, 5, false, "fp", null, false) == AutobackupAction.DoBackup);
+            Check("changed fingerprint -> DoBackup", D(true, true, 0, 5, false, "new", "old", false) == AutobackupAction.DoBackup);
+
+            // 5. Game-start bypass: the change gate is skipped, but the limit still applies.
+            Check("game-start bypass: null fp still DoBackup", D(true, true, 0, 5, false, null, null, true) == AutobackupAction.DoBackup);
+            Check("game-start bypass: unchanged fp still DoBackup", D(true, true, 0, 5, false, "same", "same", true) == AutobackupAction.DoBackup);
+            Check("game-start bypass still respects the limit", D(true, true, 5, 5, false, "same", "same", true) == AutobackupAction.LimitReached);
+            Console.WriteLine();
+        }
+
+        static void Test_AutobackupCountStore()
+        {
+            // Phase 5: the count read is advisory and must be crash-proof — a missing/empty/garbled/locked file reads 0.
+            Console.WriteLine("== Phase 5: autobackup count store ==");
+            string dir = NewDir("count");
+            Check("missing file -> 0", AutobackupCountStore.Read(Path.Combine(dir, "nope.txt")) == 0);
+            Check("null/empty path -> 0", AutobackupCountStore.Read(null) == 0 && AutobackupCountStore.Read("") == 0);
+
+            string f = Path.Combine(dir, "count.txt");
+            File.WriteAllText(f, "7");
+            Check("valid integer is read", AutobackupCountStore.Read(f) == 7);
+            File.WriteAllText(f, "  12 \r\n");
+            Check("whitespace-padded integer is read", AutobackupCountStore.Read(f) == 12);
+            File.WriteAllText(f, "");
+            Check("empty file -> 0", AutobackupCountStore.Read(f) == 0);
+            File.WriteAllText(f, "not-a-number");
+            Check("garbled file -> 0 (no throw)", AutobackupCountStore.Read(f) == 0);
+
+            // A file open with an exclusive write lock must not crash the read.
+            using (var fs = new FileStream(f, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(B("5"), 0, 1);
+                Check("exclusively-locked file -> 0 (no throw)", AutobackupCountStore.Read(f) == 0);
+            }
+            Console.WriteLine();
+        }
+
+        static void Test_AutobackupCleanup()
+        {
+            // Phase 5: auto-thinning must only ever touch autobackups. Manual backups, the (Pre-Restore) checkpoint,
+            // and pinned autobackups are protected by name/token regardless of age; surplus plain autos are removed.
+            Console.WriteLine("== Phase 5: autobackup auto-cleanup ==");
+            string dir = NewDir("cleanup");
+            long now = DateTime.UtcNow.Ticks;
+            DateTime old = DateTime.UtcNow - TimeSpan.FromDays(30);
+
+            Action<string> makeOld = name =>
+            {
+                string p = Path.Combine(dir, name);
+                MakeZip(p, z => z.AddEntry("win64_save\\data.sav", B("payload-" + name)));
+                File.SetLastWriteTimeUtc(p, old);
+            };
+
+            // Five plain autobackups, all old and within minutes of each other (one retention bucket -> keep newest).
+            for (int i = 0; i < 5; i++) { makeOld("(Auto) save " + i + ".zip"); File.SetLastWriteTimeUtc(Path.Combine(dir, "(Auto) save " + i + ".zip"), old.AddMinutes(i)); }
+            // Protected siblings, also old so survival proves the exclusion (not just recency).
+            makeOld("(Auto) keepme [PINNED].zip");   // pinned autobackup
+            makeOld("MyManualBackup.zip");           // manual (no prefix)
+            makeOld("(Pre-Restore) checkpoint.zip");  // restore checkpoint
+
+            int removed = AutobackupCleanup.Run(dir, 10, false, now); // maxKeep high so the count cap is inactive
+
+            Check("cleanup removed at least one surplus autobackup", removed >= 1, "removed=" + removed);
+            Check("the pinned autobackup survived", File.Exists(Path.Combine(dir, "(Auto) keepme [PINNED].zip")));
+            Check("the manual backup survived", File.Exists(Path.Combine(dir, "MyManualBackup.zip")));
+            Check("the (Pre-Restore) checkpoint survived", File.Exists(Path.Combine(dir, "(Pre-Restore) checkpoint.zip")));
+            int plainAutosLeft = Directory.GetFiles(dir, "(Auto)*.zip").Count(p => !Pinning.IsPinnedBackup(Path.GetFileName(p)));
+            Check("at least the newest plain autobackup survived", plainAutosLeft >= 1, "left=" + plainAutosLeft);
+            Check("removed count == plain autos thinned", removed == 5 - plainAutosLeft, "removed=" + removed + " left=" + plainAutosLeft);
+
+            // Recent-only autos must not be thinned, and an empty/absent dir is a no-op.
+            string fresh = NewDir("cleanup_fresh");
+            for (int i = 0; i < 3; i++) MakeZip(Path.Combine(fresh, "(Auto) r" + i + ".zip"), z => z.AddEntry("a", B("x")));
+            Check("recent autobackups are not thinned", AutobackupCleanup.Run(fresh, 10, false, now) == 0);
+            Check("empty dir -> 0 removed", AutobackupCleanup.Run(NewDir("cleanup_empty"), 5, false, now) == 0);
+            Check("missing dir -> 0 removed (no throw)", AutobackupCleanup.Run(Path.Combine(dir, "does-not-exist"), 5, false, now) == 0);
+            Console.WriteLine();
+        }
+
+        static void Test_GameDetect()
+        {
+            // Phase 5: the DD2 running-state read is a plain registry lookup. On the build/CI box DD2 is not installed,
+            // so it must return false without throwing (a missing key is the normal "not installed" case).
+            Console.WriteLine("== Phase 5: game detection ==");
+            bool threw = false, result = false;
+            try { result = GameDetect.IsDd2Running(); } catch { threw = true; }
+            Check("IsDd2Running() does not throw on a box without DD2", !threw);
+            Check("IsDd2Running() reports not-running when the key is absent", result == false);
             Console.WriteLine();
         }
 
