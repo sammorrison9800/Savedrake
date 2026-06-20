@@ -62,6 +62,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   save folder it finds via Steam, so new users no longer have to hunt down the cryptic `…\userdata\<id>\2054970\
   remote\win64_save` path. If you have more than one Steam profile it picks the most recently used and tells you.
   There is also a File > Detect save folder you can run any time. It only ever fills the folder in after you confirm. (#49)
+- The backup list now shows friendly times ("just now", "5 min ago", "yesterday", "3 days ago") instead of a raw
+  timestamp; older backups still show the date. Sorting by date is unchanged. (#50)
+- Backup-location heads-up: when you pick a backup folder that is in a cloud-synced folder (OneDrive, Dropbox, etc.)
+  or on the same drive as your saves, Savedrake now gives a one-time, non-blocking note about the trade-off. (#50)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment
