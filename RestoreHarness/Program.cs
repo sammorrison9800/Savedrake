@@ -92,6 +92,7 @@ namespace RestoreHarness
                 Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
                 Test_ChangeFingerprint();   // change-aware autobackup (PR1): save fingerprint is stable/changes/fail-closed
+                Test_TieredRetention();   // change-aware autobackup (PR2): tiered-retention selector (buckets/cap/idempotent)
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
@@ -435,6 +436,64 @@ namespace RestoreHarness
                 Check("a locked (mid-write) save file -> null (fail-closed)", (string)fp.Invoke(null, new object[] { locked }) == null);
             }
             Check("fingerprint recovers once the file is unlocked", (string)fp.Invoke(null, new object[] { locked }) != null);
+            Console.WriteLine();
+        }
+
+        static void Test_TieredRetention()
+        {
+            // Change-aware autobackup (PR2): SelectAutobackupsToThin is the pure tiered-retention selector. It must keep
+            // all recent backups, keep the newest per widening time bucket, honor the count cap by thinning oldest
+            // survivors, be idempotent, and keep future-dated (clock-skew) backups.
+            Console.WriteLine("== Change-aware autobackup: tiered retention (PR2) ==");
+            var thin = SM("SelectAutobackupsToThin");
+            long now = DateTime.UtcNow.Ticks;
+            Func<long[], int, int[]> run = (ticks, cap) => (int[])thin.Invoke(null, new object[] { ticks, now, cap });
+
+            Check("empty input -> nothing thinned", run(new long[0], 0).Length == 0);
+            Check("single backup -> kept", run(new long[] { now - TimeSpan.FromHours(3).Ticks }, 0).Length == 0);
+
+            long[] recent = {
+                now - TimeSpan.FromMinutes(5).Ticks,
+                now - TimeSpan.FromMinutes(20).Ticks,
+                now - TimeSpan.FromMinutes(45).Ticks,
+            };
+            Check("all backups within the last hour are kept", run(recent, 0).Length == 0);
+
+            // Three in the same 30-minute bucket (1-6h tier) -> keep only the newest (index 0).
+            long[] bucket = {
+                now - TimeSpan.FromHours(2).Ticks,
+                now - (TimeSpan.FromHours(2).Ticks + TimeSpan.FromMinutes(5).Ticks),
+                now - (TimeSpan.FromHours(2).Ticks + TimeSpan.FromMinutes(20).Ticks),
+            };
+            int[] d = run(bucket, 0);
+            Check("a 30-min bucket keeps only the newest (2 of 3 thinned)", d.Length == 2 && !d.Contains(0), "deleted=" + string.Join(",", d));
+
+            // Five recent (all kept by schedule), cap=3 -> the 2 oldest are thinned.
+            long[] five = {
+                now - TimeSpan.FromMinutes(5).Ticks,
+                now - TimeSpan.FromMinutes(15).Ticks,
+                now - TimeSpan.FromMinutes(25).Ticks,
+                now - TimeSpan.FromMinutes(35).Ticks,
+                now - TimeSpan.FromMinutes(50).Ticks,
+            };
+            int[] capped = run(five, 3);
+            Check("count cap thins the oldest survivors (2 thinned to reach 3)", capped.Length == 2 && capped.Contains(3) && capped.Contains(4), "deleted=" + string.Join(",", capped));
+
+            // Idempotency: thin once, drop the deleted, re-run -> nothing more.
+            long[] across = {
+                now - TimeSpan.FromMinutes(10).Ticks,
+                now - TimeSpan.FromHours(2).Ticks,
+                now - (TimeSpan.FromHours(2).Ticks + TimeSpan.FromMinutes(10).Ticks),
+                now - TimeSpan.FromHours(10).Ticks,
+                now - TimeSpan.FromDays(3).Ticks,
+                now - TimeSpan.FromDays(20).Ticks,
+            };
+            int[] first = run(across, 0);
+            long[] survivors = Enumerable.Range(0, across.Length).Where(i => !first.Contains(i)).Select(i => across[i]).ToArray();
+            Check("re-running on survivors thins nothing (idempotent)", run(survivors, 0).Length == 0, "first=" + string.Join(",", first));
+
+            // A future-dated backup (clock skew) is kept, as is an old one alone in its weekly bucket.
+            Check("a future-dated backup is kept (treated as newest)", run(new long[] { now + TimeSpan.FromHours(1).Ticks, now - TimeSpan.FromDays(30).Ticks }, 0).Length == 0);
             Console.WriteLine();
         }
 
