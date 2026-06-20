@@ -30,6 +30,7 @@ namespace Savedrake.App.ViewModels
         private readonly IDialogService _dialog;
         private readonly IStatusSink _status;
         private readonly AutobackupController _autobackup;
+        private readonly SoundFeedback _sound = new SoundFeedback();
 
         private bool _loaded;               // false during initial settings load so property hooks don't react
         private bool _inEnableChange;       // re-entrancy guard while the enable toggle is being processed/reverted
@@ -131,6 +132,7 @@ namespace Savedrake.App.ViewModels
                 BackupResult r = BackupService.Backup(
                     new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = true, RandomName = true },
                     _dialog, _status);
+                if (r.Ok) _sound.Success(); else _sound.Error();
                 return r.Ok;
             }
             finally { _isOperationInProgress = prev; }
@@ -465,9 +467,10 @@ namespace Savedrake.App.ViewModels
             _isOperationInProgress = true;
             try
             {
-                BackupService.Backup(
+                BackupResult r = BackupService.Backup(
                     new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = false, RandomName = true },
                     _dialog, _status);
+                if (r.Ok) _sound.Success(); else _sound.Error();
             }
             finally { _isOperationInProgress = false; }
 

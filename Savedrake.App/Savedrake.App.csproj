@@ -34,4 +34,11 @@
     <ProjectReference Include="..\Savedrake.Core\Savedrake.Core.csproj" />
   </ItemGroup>
 
+  <!-- Short feedback sounds played on backup success/failure. They must sit next to Savedrake.App.exe (resolved
+       against the install dir at runtime), so copy them to the output. Same assets the WinForms app ships. -->
+  <ItemGroup>
+    <Content Include="success.wav" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="error.wav" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
