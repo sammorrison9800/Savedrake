@@ -960,7 +960,32 @@ namespace RestoreHarness
                     Check(wav + " is a valid RIFF/WAVE file", riffWave);
                 }
             }
+
+            // Phase 6a: the WPF app (Savedrake.App.exe) plays the same feedback sounds, resolved from its own install
+            // dir, so they must copy to the App's output too. Skipped if the App build output isn't present.
+            string appDir = ResolveAppBin();
+            if (appDir != null)
+            {
+                foreach (string wav in new[] { "success.wav", "error.wav" })
+                {
+                    string p = Path.Combine(appDir, wav);
+                    Check("Savedrake.App: " + wav + " present in build output", File.Exists(p), p);
+                }
+            }
             Console.WriteLine();
+        }
+
+        // Locate the built Savedrake.App.exe output (sibling of the WinForms output), so the sound-asset test can
+        // confirm the WPF app ships the wavs too. Returns null if the App hasn't been built.
+        static string ResolveAppBin()
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            foreach (string cfg in new[] { "Release", "Debug" })
+            {
+                string p = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Savedrake.App", "bin", cfg));
+                if (File.Exists(Path.Combine(p, "Savedrake.App.exe"))) return p;
+            }
+            return null;
         }
 
         static void Test_ValidateBackup()
