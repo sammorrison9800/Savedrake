@@ -15,11 +15,14 @@ namespace RestoreHarness
     {
         static int passed = 0, failed = 0;
         static Type T;
+        static Assembly Core;           // Savedrake.Core.dll — logic extracted during the WPF migration
         static object inst;             // uninitialized Main (constructor NOT run)
         static string work;             // harness scratch root
 
         static MethodInfo SM(string n) { var m = T.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Static); if (m == null) throw new Exception("static method not found: " + n); return m; }
         static MethodInfo IM(string n) { var m = T.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Instance); if (m == null) throw new Exception("instance method not found: " + n); return m; }
+        // Public static method on a Savedrake.Core type, e.g. CM("IntervalParser","TryParse").
+        static MethodInfo CM(string typeName, string method) { var t = Core.GetType("Savedrake." + typeName); if (t == null) throw new Exception("core type not found: Savedrake." + typeName); var m = t.GetMethod(method, BindingFlags.Public | BindingFlags.Static); if (m == null) throw new Exception("core method not found: " + typeName + "." + method); return m; }
 
         static void Check(string name, bool ok, string detail = null)
         {
@@ -65,6 +68,11 @@ namespace RestoreHarness
             T = asm.GetType("Savedrake.Main");
             if (T == null) { Console.WriteLine("Could not find Savedrake.Main"); return 2; }
             inst = FormatterServices.GetUninitializedObject(T); // no ctor → no UI/registry/WMI
+
+            // Logic extracted into Savedrake.Core during the WPF migration is exercised directly from the Core assembly.
+            string corePath = Path.Combine(bin, "Savedrake.Core.dll");
+            Core = File.Exists(corePath) ? Assembly.LoadFrom(corePath) : null;
+            if (Core == null) { Console.WriteLine("Could not load Savedrake.Core.dll at: " + corePath); return 2; }
 
             work = Path.Combine(Path.GetTempPath(), "sdk_restore_harness_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(work);
@@ -145,12 +153,12 @@ namespace RestoreHarness
         static bool TryParseInterval(string input, out TimeSpan interval)
         {
             object[] a = { input, null };
-            bool ok = (bool)SM("TryParseInterval").Invoke(null, a);
+            bool ok = (bool)CM("IntervalParser", "TryParse").Invoke(null, a);
             interval = a[1] == null ? TimeSpan.Zero : (TimeSpan)a[1];
             return ok;
         }
 
-        static string CanonicalizeInterval(string input) { return (string)SM("CanonicalizeInterval").Invoke(null, new object[] { input }); }
+        static string CanonicalizeInterval(string input) { return (string)CM("IntervalParser", "Canonicalize").Invoke(null, new object[] { input }); }
 
         // ---- tests ----
         static void Test_IsRealSaveEntry()
@@ -583,7 +591,7 @@ namespace RestoreHarness
         {
             // QoL: FriendlyTime renders a backup's age as a human phrase, falling back to an absolute date for old ones.
             Console.WriteLine("== QoL: friendly relative time ==");
-            var ft = SM("FriendlyTime");
+            var ft = CM("TimeText", "Friendly");
             System.Func<DateTime, string> F = d => (string)ft.Invoke(null, new object[] { d });
             Check("recent -> 'just now'", F(DateTime.Now.AddSeconds(-5)) == "just now");
             Check("minutes -> 'N min ago'", F(DateTime.Now.AddMinutes(-5)).EndsWith("min ago"));
@@ -674,7 +682,7 @@ namespace RestoreHarness
         {
             // P2: the logger must strip personal data before writing. Redact is a pure function (no side effects).
             Console.WriteLine("== Logging: redaction (P2) ==");
-            Type logT = T.Assembly.GetType("Savedrake.Log");
+            Type logT = Core.GetType("Savedrake.Log");
             Check("Savedrake.Log type exists", logT != null);
             if (logT == null) { Console.WriteLine(); return; }
             var redact = logT.GetMethod("Redact", BindingFlags.Public | BindingFlags.Static);
