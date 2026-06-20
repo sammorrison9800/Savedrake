@@ -55,6 +55,15 @@ namespace Savedrake
         // the extra old autobackups. _recycleMenuItem on = send removed ones to the Recycle Bin instead of deleting.
         private ToolStripMenuItem _cleanupMenuItem;
         private ToolStripMenuItem _recycleMenuItem;
+        // Change-aware autobackup, part 4 (back up the moment the game saves): a FileSystemWatcher on the save folder
+        // triggers a backup shortly after the game writes a save, instead of waiting for the interval timer. Off by
+        // default (_backupOnSaveMenuItem). _quiesceTimer debounces a burst of write events; _suppressSaveWatcher is set
+        // while WE write the save folder (restore) so our own writes never trigger a backup. The interval timer stays
+        // on as a fallback, so a missed/overflowed watcher event is still caught.
+        private ToolStripMenuItem _backupOnSaveMenuItem;
+        private FileSystemWatcher _saveWatcher;
+        private System.Windows.Forms.Timer _quiesceTimer;
+        private volatile bool _suppressSaveWatcher;
         #endregion
 
         //Hotkey related
@@ -252,6 +261,17 @@ namespace Savedrake
             ssettingsToolStripMenuItem.DropDownItems.Add(_cleanupMenuItem);
             ssettingsToolStripMenuItem.DropDownItems.Add(_recycleMenuItem);
 
+            // Files > Settings: opt-in "back up the moment the game saves" (change-aware autobackup, part 4). OFF by
+            // default. When on (and autobackup is enabled and the game is running) a FileSystemWatcher captures a backup
+            // shortly after each real save instead of waiting for the interval timer; the timer stays on as a fallback.
+            _backupOnSaveMenuItem = new ToolStripMenuItem("Back up the moment the game saves") { CheckOnClick = true };
+            _backupOnSaveMenuItem.CheckedChanged += (s, e) =>
+            {
+                if (_backupOnSaveMenuItem.Checked && checkbox_auto.Checked && isGameRunning) StartSaveWatcher();
+                else StopSaveWatcher();
+            };
+            ssettingsToolStripMenuItem.DropDownItems.Add(_backupOnSaveMenuItem);
+
             //tray
             #region
             // Initialize the NotifyIcon component
@@ -363,6 +383,9 @@ namespace Savedrake
 
             [XmlElement("RemovedToRecycleBin")]
             public bool RemovedToRecycleBin { get; set; }
+
+            [XmlElement("BackupOnSaveChange")]
+            public bool BackupOnSaveChange { get; set; }
 
 
 
@@ -502,6 +525,7 @@ namespace Savedrake
 
                 AutoCleanupOldBackups = _cleanupMenuItem != null && _cleanupMenuItem.Checked,
                 RemovedToRecycleBin = _recycleMenuItem != null && _recycleMenuItem.Checked,
+                BackupOnSaveChange = _backupOnSaveMenuItem != null && _backupOnSaveMenuItem.Checked,
                 
                 // Save the hotkey settings
                 Hotkey = new HotkeySettings
@@ -627,6 +651,7 @@ namespace Savedrake
                 _recycleMenuItem.Checked = settings.AutoCleanupOldBackups && settings.RemovedToRecycleBin;
                 _recycleMenuItem.Enabled = _cleanupMenuItem.Checked;
             }
+            if (_backupOnSaveMenuItem != null) _backupOnSaveMenuItem.Checked = settings.BackupOnSaveChange;
 
 
 
@@ -1109,6 +1134,7 @@ namespace Savedrake
                 {
                     SetAutoBackupInterval();
                     autobackupTimer.Start();
+                    StartSaveWatcher(); // part 4: also capture instantly on each save, if the user opted in
 
                     //Count's before backing up in the beginning.
                     string countFilePath = AutoBackupCountFilePath;
@@ -1156,6 +1182,7 @@ namespace Savedrake
                 else
                 {
                     autobackupTimer.Stop();
+                    StopSaveWatcher();
                     Status.Text = $"Game not running. Autobackup paused.";
                     //NotifyUser("Game not running. Autobackup will start when the game starts."); // Game is not running, wait to start autobackup.
                 }
@@ -1163,6 +1190,7 @@ namespace Savedrake
             else
             {
                 autobackupTimer.Stop(); // Auto backup checkbox is not checked, stop autobackup.
+                StopSaveWatcher();
                                         // No message is needed here as per your requirement.
             }
         }
@@ -1207,22 +1235,28 @@ namespace Savedrake
 
         private void OnAutobackupTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
-            // R7a re-entrancy guard: SynchronizingObject runs this on the UI thread, but AutoReset keeps the timer
-            // firing, and any modal dialog opened below (max-reached / a BackupOperation error) pumps the message
-            // queue — which would dispatch a queued NEXT tick nested inside this one (stacked dialogs, interleaved
-            // count-file read-modify-write). Single UI thread, so a plain field flag suffices.
+            // The interval timer is now one of two triggers for a change-aware autobackup (the other is the save
+            // watcher, part 4). Both funnel through RunChangeAwareAutobackup, which carries the re-entrancy guard.
+            RunChangeAwareAutobackup();
+        }
+
+        // One change-aware autobackup attempt, shared by the interval timer and the save watcher (part 4). Must run on
+        // the UI thread (the timer marshals via SynchronizingObject; the watcher via BeginInvoke). The re-entrancy guard
+        // (R7a) keeps overlapping triggers safe: a modal dialog below pumps the message queue, and a timer tick and a
+        // settled watcher event can arrive together — the second call finds the fingerprint unchanged and skips.
+        private void RunChangeAwareAutobackup()
+        {
             if (_autoBackupInProgress) return;
             _autoBackupInProgress = true;
             try
             {
-                // R7a fallback: the registry/WMI watcher can miss a game-exit event, leaving the timer running.
-                // Re-check game state on every tick (fresh read, not the cached isGameRunning); if DD2 is no longer
-                // running, sync the flag and pause autobackup rather than backing up stale saves while the game is
-                // closed. Runs on the UI thread (SynchronizingObject), so touching the timer/Status here is safe.
+                // Re-check game state every time (fresh read, not the cached isGameRunning); if DD2 is no longer
+                // running, sync the flag and pause autobackup AND the save watcher rather than backing up stale saves.
                 if (!CheckGameRunningStatus())
                 {
                     isGameRunning = false;
                     autobackupTimer.Stop();
+                    StopSaveWatcher();
                     Status.Text = "Game not running. Autobackup paused.";
                     return;
                 }
@@ -1244,12 +1278,9 @@ namespace Savedrake
                     // otherwise the original behavior stops autobackup once the limit is reached.
                     if ((_cleanupMenuItem != null && _cleanupMenuItem.Checked) || backupCount < maxBackups)
                     {
-                        // Change-aware gate (PR1): skip this tick when the save folder is unchanged since the last
-                        // backup, so the timer stops writing redundant identical zips that consume the autobackup
-                        // limit. A null fingerprint (folder missing/locked/mid-write/no save data) fails CLOSED: skip
-                        // and retry next tick rather than zip a folder we cannot fully read. A null baseline (first
-                        // eligible tick) never skips. Skipping consumes no count and writes no file; the limit/branch
-                        // logic and the _autoBackupInProgress guard are untouched.
+                        // Change-aware gate (PR1): skip when the save folder is unchanged since the last backup. A null
+                        // fingerprint (folder missing/locked/mid-write/no save data) fails CLOSED: skip and retry. A
+                        // null baseline (first eligible attempt) never skips. Skipping consumes no count, writes no file.
                         string currentFp = ComputeSaveFingerprint(textbox1.Text);
                         if (currentFp == null)
                         {
@@ -1262,15 +1293,14 @@ namespace Savedrake
                         else
                         {
                             BackupOperation(true); // Perform the backup operation
-                            // Do NOT increment a stale local: BackupOperation -> LoadBackupHistory already recomputed
-                            // the count from the actual autobackup files on disk and wrote it to countFilePath. Writing
-                            // backupCount+1 here clobbered that recount AND advanced the limit even when the backup
-                            // FAILED (no file created). The next tick re-reads the accurate value.
+                            // BackupOperation -> LoadBackupHistory recomputes the count from the files on disk, so no
+                            // stale local increment here (which previously advanced the limit even on a failed backup).
                         }
                     }
                     else
                     {
                         autobackupTimer.Stop(); // limit reached — stop BEFORE the modal so no further tick is armed
+                        StopSaveWatcher();
                         checkbox_auto.Checked = false;
                         MessageBox.Show($"The maximum number of {maxBackups} autobackups has been reached. To change the limit go to: \"Files > Settings > Limit Autobackups\" and enter the new limit.", "Autobackup", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
@@ -1285,6 +1315,102 @@ namespace Savedrake
             {
                 _autoBackupInProgress = false;
             }
+        }
+
+        // ---- Part 4: save-folder watcher (instant capture). No-op unless the user opted in. The interval timer stays
+        // on as the fallback, so a missed or overflowed watcher event is still caught on the next tick. ----
+
+        private void StartSaveWatcher()
+        {
+            if (_backupOnSaveMenuItem == null || !_backupOnSaveMenuItem.Checked) return;
+            if (string.IsNullOrWhiteSpace(textbox1.Text) || !Directory.Exists(textbox1.Text)) return;
+            try
+            {
+                StopSaveWatcher(); // ensure a single clean instance (also disposes any previous quiesce timer)
+                _quiesceTimer = new System.Windows.Forms.Timer { Interval = 4000 }; // debounce: wait for writes to settle
+                _quiesceTimer.Tick += OnQuiesceElapsed;
+                _saveWatcher = new FileSystemWatcher(textbox1.Text)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.CreationTime,
+                    InternalBufferSize = 64 * 1024
+                };
+                _saveWatcher.Changed += OnSaveChanged;
+                _saveWatcher.Created += OnSaveChanged;
+                _saveWatcher.Deleted += OnSaveChanged;
+                _saveWatcher.Renamed += OnSaveChanged;
+                _saveWatcher.Error += OnSaveWatcherError;
+                _saveWatcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Could not start the save watcher (the interval timer remains the fallback): " + ex.Message);
+                StopSaveWatcher();
+            }
+        }
+
+        private void StopSaveWatcher()
+        {
+            // Fully tear the debounce timer down (stop + unsubscribe + dispose + null) so repeated start/stop cycles
+            // don't accumulate timers or duplicate Tick handlers, and so a queued callback sees null rather than a
+            // disposed object.
+            if (_quiesceTimer != null)
+            {
+                try { _quiesceTimer.Stop(); } catch { }
+                try { _quiesceTimer.Tick -= OnQuiesceElapsed; } catch { }
+                try { _quiesceTimer.Dispose(); } catch { }
+                _quiesceTimer = null;
+            }
+            if (_saveWatcher != null)
+            {
+                try { _saveWatcher.EnableRaisingEvents = false; } catch { }
+                try
+                {
+                    _saveWatcher.Changed -= OnSaveChanged;
+                    _saveWatcher.Created -= OnSaveChanged;
+                    _saveWatcher.Deleted -= OnSaveChanged;
+                    _saveWatcher.Renamed -= OnSaveChanged;
+                    _saveWatcher.Error -= OnSaveWatcherError;
+                }
+                catch { }
+                try { _saveWatcher.Dispose(); } catch { }
+                _saveWatcher = null;
+            }
+        }
+
+        // Watcher events fire on a ThreadPool thread. Ignore our own restore writes; otherwise marshal to the UI thread
+        // and (re)start the debounce, so a burst of writes collapses into one backup once the save has settled.
+        private void OnSaveChanged(object sender, FileSystemEventArgs e)
+        {
+            if (_suppressSaveWatcher) return;
+            try { if (IsHandleCreated) BeginInvoke((MethodInvoker)RestartQuiesce); } catch { }
+        }
+
+        private void RestartQuiesce()
+        {
+            // A watcher event marshaled here can land after StopSaveWatcher disposed+nulled the timer (shutdown / game
+            // exit / toggle off). Null-check covers the nulled case; try/catch covers a queued message racing dispose.
+            if (_quiesceTimer == null) return;
+            try { _quiesceTimer.Stop(); _quiesceTimer.Start(); } catch (ObjectDisposedException) { }
+        }
+
+        private void OnQuiesceElapsed(object sender, EventArgs e)
+        {
+            if (_quiesceTimer == null) return;
+            try { _quiesceTimer.Stop(); } catch (ObjectDisposedException) { return; }
+            if (_suppressSaveWatcher) return;
+            if (!checkbox_auto.Checked) return;
+            // A backup or restore is mid-flight: wait another quiet window rather than overlapping it.
+            if (_operationInProgress) { try { _quiesceTimer.Start(); } catch (ObjectDisposedException) { } return; }
+            RunChangeAwareAutobackup();
+        }
+
+        // A watcher Error (e.g. InternalBufferOverflow) means events may have been dropped. Re-arm the watcher; the
+        // interval timer covers anything missed in the meantime.
+        private void OnSaveWatcherError(object sender, ErrorEventArgs e)
+        {
+            Log.Warn("Save watcher error, re-arming: " + (e.GetException() != null ? e.GetException().Message : "unknown"));
+            try { if (IsHandleCreated) BeginInvoke((MethodInvoker)(() => { StopSaveWatcher(); StartSaveWatcher(); })); } catch { }
         }
 
         private void combobox_auto_Validating(object sender, System.ComponentModel.CancelEventArgs e)
@@ -2304,7 +2430,12 @@ namespace Savedrake
                     }
 
                     // STEP 4 — delegate ALL destructive work (staging, swap, rollback, cleanup) to the transaction.
-                    bool ok = RestoreTransactional(filePath, textbox1.Text);
+                    // Part 4: suppress the save watcher around the restore writes so our own writes don't trigger a backup
+                    // (the _operationInProgress guard and the post-restore fingerprint baseline are independent backstops).
+                    bool ok;
+                    _suppressSaveWatcher = true;
+                    try { ok = RestoreTransactional(filePath, textbox1.Text); }
+                    finally { _suppressSaveWatcher = false; }
 
                     // STEP 5 — post-success UI. Undo is DISABLED on success: old saves went to a temp dir, not the
                     // recycle bin, so a recycle-bin Undo would silently no-op. Honest = disable it.
@@ -3612,6 +3743,7 @@ namespace Savedrake
             msgWindow.DestroyHandle(); // Clean up the message-only window
 
             autobackupTimer?.Dispose(); // R7a: the timer was previously never disposed
+            StopSaveWatcher(); // part 4: stop, unsubscribe, dispose the save watcher + the quiesce timer (nulls both)
 
             if (_watcher != null)
             {
