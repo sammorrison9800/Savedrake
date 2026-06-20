@@ -28,53 +28,103 @@ namespace Savedrake
         private bool _frameless = true; // borderless custom chrome (the header is the top of the window)
         private float _scale = 1f;
 
-        // ---- Frameless custom chrome ----
+        // ---- Frameless custom chrome (Approach B) ----
+        // Instead of FormBorderStyle.None losing every window behavior, we keep a REAL sizable window (WS_THICKFRAME) so
+        // the OS still gives resize, Aero Snap, the drop shadow and minimize animations, and only strip the title-bar
+        // caption by returning 0 from WM_NCCALCSIZE (client fills the whole window -> looks borderless). The form's
+        // WM_NCHITTEST returns the resize/caption codes; the header + status child panels return HTTRANSPARENT (see
+        // HeaderPanel.WndProc / the status MouseDown forwarder) so the hit reaches the form over them.
+        private const int WS_MINIMIZEBOX = 0x00020000, WS_SYSMENU = 0x00080000, WS_THICKFRAME = 0x00040000;
+        private const int WM_NCCALCSIZE = 0x0083, WM_NCHITTEST = 0x0084, WM_NCLBUTTONDOWN = 0x00A1;
+        private const int HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13,
+                          HTTOPRIGHT = 14, HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
+
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS m);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-        // Re-add the drop shadow the OS frame normally provides (CS_DROPSHADOW). Applied at handle creation because
-        // FormBorderStyle is None from the Designer, so _frameless is already true here.
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct MARGINS { public int Left, Right, Top, Bottom; }
+
         protected override CreateParams CreateParams
         {
             get
             {
                 CreateParams cp = base.CreateParams;
-                if (_frameless) cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW
+                // Keep it a resizable window with a system menu + minimize box (snap, shadow, min-animation, Alt+Space).
+                if (_frameless) cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU;
                 return cp;
             }
         }
 
-        // Hit-test the borderless window: a resize grip near every edge/corner, and a drag band over the header's
-        // background (but not over the menu or caption buttons, which return HTCLIENT so they still get clicks). Returning
-        // HTCAPTION lets Windows handle move + Aero Snap natively.
         protected override void WndProc(ref Message m)
         {
-            const int WM_NCHITTEST = 0x0084;
-            if (_frameless && _header != null && m.Msg == WM_NCHITTEST && this.WindowState == FormWindowState.Normal)
+            if (_frameless && _header != null)
             {
-                long lp = m.LParam.ToInt64();
-                int sx = (short)(lp & 0xFFFF), sy = (short)((lp >> 16) & 0xFFFF);
-                Point pt = PointToClient(new Point(sx, sy));
-                int grip = Sx(7);
-                bool l = pt.X <= grip, r = pt.X >= ClientSize.Width - grip;
-                bool t = pt.Y <= grip, b = pt.Y >= ClientSize.Height - grip;
-                int code = 0;
-                if (t && l) code = 13; else if (t && r) code = 14; else if (b && l) code = 16; else if (b && r) code = 17;
-                else if (l) code = 10; else if (r) code = 11; else if (t) code = 12; else if (b) code = 15;
-                if (code != 0) { m.Result = (IntPtr)code; return; }
-                if (pt.Y < _header.Height)
+                if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
                 {
-                    Point hp = _header.PointToClient(new Point(sx, sy));
-                    if (_header.GetChildAtPoint(hp) == null) { m.Result = (IntPtr)2; return; } // HTCAPTION
+                    // Remove the non-client frame so the client area fills the whole window (borderless look). The
+                    // WS_THICKFRAME style is still set, so the OS keeps resize/snap/shadow/animations.
+                    m.Result = IntPtr.Zero;
+                    return;
+                }
+                if (m.Msg == WM_NCHITTEST)
+                {
+                    m.Result = (IntPtr)NcHitTest(m.LParam);
+                    return;
                 }
             }
             base.WndProc(ref m);
         }
 
+        // Resize grip near each edge/corner; a caption (drag) band over the header background; client otherwise.
+        private int NcHitTest(IntPtr lParam)
+        {
+            long lp = lParam.ToInt64();
+            int sx = (short)(lp & 0xFFFF), sy = (short)((lp >> 16) & 0xFFFF);
+            Point pt = PointToClient(new Point(sx, sy));
+            int g = Sx(8);
+            bool left = pt.X <= g, right = pt.X >= ClientSize.Width - g;
+            bool top = pt.Y <= g, bottom = pt.Y >= ClientSize.Height - g;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+            if (pt.Y < _header.Height)
+            {
+                Point hp = _header.PointToClient(new Point(sx, sy));
+                if (_header.GetChildAtPoint(hp) == null) return HTCAPTION; // drag (not over menu / caption buttons)
+            }
+            return HTCLIENT;
+        }
+
+        // The header and status strip are child HWNDs that cover the top/bottom resize edges. The header (a custom
+        // control) returns HTTRANSPARENT in its own WndProc; the stock StatusStrip is made transparent the same way via a
+        // NativeWindow hook on its handle, so the bottom edge + corners fall through to the form's WM_NCHITTEST.
+        private sealed class HitTransparentWindow : NativeWindow
+        {
+            protected override void WndProc(ref Message m)
+            {
+                if (m.Msg == 0x0084) { m.Result = (IntPtr)(-1); return; } // WM_NCHITTEST -> HTTRANSPARENT
+                base.WndProc(ref m);
+            }
+        }
+        private HitTransparentWindow _statusHook;
+
         private void ApplyFramelessCorners()
         {
-            // Win11 rounded corners for the borderless window (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2).
+            // Win11 rounded corners (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2) + restore the DWM drop shadow.
             try { int round = 2; DwmSetWindowAttribute(this.Handle, 33, ref round, 4); } catch { }
+            try { MARGINS mg = new MARGINS { Left = 1, Right = 1, Top = 1, Bottom = 1 }; DwmExtendFrameIntoClientArea(this.Handle, ref mg); } catch { }
         }
 
         // Darkens OS-drawn bits a WinForms theme can't reach (the ListView's scrollbar). "DarkMode_Explorer" gives a
@@ -219,6 +269,13 @@ namespace Savedrake
 
             ApplyListScrollTheme();
             ApplyFramelessCorners();
+            // Make the bottom status strip transparent to hit-testing so the bottom window edge/corners can resize.
+            // Done last so it binds the FINAL handle (Theme/ResumeLayout can recreate the strip's handle earlier).
+            if (_statusHook == null && statusStrip1.IsHandleCreated)
+            {
+                _statusHook = new HitTransparentWindow();
+                _statusHook.AssignHandle(statusStrip1.Handle);
+            }
             FitToWorkArea();
             listViewColumnResize();
         }

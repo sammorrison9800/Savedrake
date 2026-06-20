@@ -84,6 +84,10 @@ All notable changes to Savedrake are recorded here. The format is based on
 - The window now always opens fully on screen: it is sized to fit the monitor's work area and nudged away from the
   edges, so on a shorter screen the bottom (status bar and resize edge) is no longer hidden behind the taskbar. The
   backup list shrinks to fit. (#55)
+- Fixed window dragging and resizing on the borderless window. The window can now be moved by dragging the header and
+  resized from every edge and corner, and it keeps the native Windows behaviours (Aero Snap, the drop shadow, the
+  minimize animation, and the Alt+Space system menu). Previously the custom header swallowed the clicks, so the window
+  could not be moved at all. (#56)
 - The window title bar now follows the theme too (charcoal in dark, parchment in light) on Windows 11, so the whole
   window is cohesive. On Windows 10 the title bar matches dark/light mode; only a few Windows-managed bits (e.g.
   scrollbars) keep the system colour. (#52)
