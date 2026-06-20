@@ -45,6 +45,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   "keep the newest N" limit loses them. Your manual backups and the pre-restore checkpoint are never removed,
   and a backup that fails its integrity check is never removed. Removed backups are deleted by default, or sent
   to the Recycle Bin if you tick the second option. (#45)
+- Pin a backup (part 3 of 3): right-click any backup and choose "Pin backup" to protect it. A pinned backup is
+  never removed by the automatic cleanup and does not count toward your autobackup limit, so you can keep an
+  important restore point (for example, before a boss) for as long as you like. Pinned backups are marked with
+  "[PINNED]" in the file name, so you can see them in the folder too; right-click again to unpin. (#46)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment

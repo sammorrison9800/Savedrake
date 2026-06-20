@@ -182,13 +182,24 @@ namespace Savedrake
             ContextMenuStrip contextMenuStrip = new ContextMenuStrip();
             ToolStripMenuItem renameMenultem = new ToolStripMenuItem("Rename");
             ToolStripMenuItem deleteMenuItem = new ToolStripMenuItem("Delete");
+            ToolStripMenuItem pinMenuItem = new ToolStripMenuItem("Pin backup");
             ToolStripMenuItem validateAllMenuItem = new ToolStripMenuItem("Validate all backups");
             contextMenuStrip.Items.Add(renameMenultem);
             contextMenuStrip.Items.Add(deleteMenuItem);
+            contextMenuStrip.Items.Add(pinMenuItem);
             contextMenuStrip.Items.Add(validateAllMenuItem);
             renameMenultem.Click += RenameMenultem_Click;
             deleteMenuItem.Click += DeleteMenuItem_Click;
+            pinMenuItem.Click += PinMenuItem_Click;
             validateAllMenuItem.Click += (s, e) => ValidateAllBackups();
+            // Pinning (part 3): the menu label reflects the selected backup's state, and Pin is only available for a
+            // single selection.
+            contextMenuStrip.Opening += (s, e) =>
+            {
+                bool one = listView.SelectedItems.Count == 1;
+                pinMenuItem.Enabled = one;
+                pinMenuItem.Text = (one && IsPinnedBackup(Path.GetFileName(listView.SelectedItems[0].Tag.ToString()))) ? "Unpin backup" : "Pin backup";
+            };
             listView.ContextMenuStrip = contextMenuStrip;
 
             //listView related
@@ -1962,6 +1973,7 @@ namespace Savedrake
                 {
                     string name = Path.GetFileName(file);
                     if (!(name.StartsWith("(Auto)") || name.StartsWith("auto"))) continue;
+                    if (IsPinnedBackup(name)) continue; // pinned backups (part 3) are never removed
                     files.Add(file);
                     ticks.Add(File.GetLastWriteTimeUtc(file).Ticks);
                 }
@@ -1996,6 +2008,32 @@ namespace Savedrake
                 }
             }
             catch (Exception ex) { Log.Warn("Auto-cleanup of old autobackups failed: " + ex.Message); }
+        }
+
+        // Change-aware autobackup, part 3 (pinning): a pinned backup is protected from automatic cleanup and is not
+        // counted toward the autobackup limit. Pins are marked by a " [PINNED]" token in the file name (not a sidecar
+        // or index) so they survive copy/move, are visible in Explorer and the backup list, and need no extra storage.
+        // Renaming a pinned file outside Savedrake to drop the token simply unpins it.
+        internal const string PinTag = "[PINNED]";
+
+        private static bool IsPinnedBackup(string fileName)
+        {
+            return !string.IsNullOrEmpty(fileName) && fileName.IndexOf(PinTag, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        // The pinned form of a backup path: insert " [PINNED]" before the extension. Idempotent (already-pinned -> unchanged).
+        private static string PinnedPath(string path)
+        {
+            if (IsPinnedBackup(Path.GetFileName(path))) return path;
+            return Path.Combine(Path.GetDirectoryName(path),
+                Path.GetFileNameWithoutExtension(path) + " " + PinTag + Path.GetExtension(path));
+        }
+
+        // The unpinned form of a backup path: strip the " [PINNED]" token. Idempotent.
+        private static string UnpinnedPath(string path)
+        {
+            string cleaned = Path.GetFileName(path).Replace(" " + PinTag, "").Replace(PinTag, "");
+            return Path.Combine(Path.GetDirectoryName(path), cleaned);
         }
 
         // Backup integrity verification, layer 2 (P1): confirm the freshly written archive contains every file the
@@ -2622,7 +2660,7 @@ namespace Savedrake
             listView.Refresh();
 
             // Filter the zip files to include only those with "(Auto)" or "auto" in the name
-            string[] autoBackupFiles = zipFiles.Where(file => Path.GetFileName(file).StartsWith("(Auto)") || Path.GetFileName(file).StartsWith("auto")).ToArray();
+            string[] autoBackupFiles = zipFiles.Where(file => (Path.GetFileName(file).StartsWith("(Auto)") || Path.GetFileName(file).StartsWith("auto")) && !IsPinnedBackup(Path.GetFileName(file))).ToArray();
 
             // Set the backup count to the number of autobackup files found
             backupCount = autoBackupFiles.Length;
@@ -3182,6 +3220,38 @@ namespace Savedrake
             if (listView.SelectedItems.Count == 1)
             {
                 listView.SelectedItems[0].BeginEdit();
+            }
+        }
+
+        // Pinning (part 3): toggle the selected backup's pinned state by renaming it to add/remove the " [PINNED]"
+        // token. A pinned backup is protected from automatic cleanup and is not counted toward the autobackup limit.
+        private void PinMenuItem_Click(object sender, EventArgs e)
+        {
+            if (listView.SelectedItems.Count != 1)
+            {
+                MessageBox.Show("Select one backup to pin or unpin.", "Pin backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string path;
+            try { path = listView.SelectedItems[0].Tag.ToString(); } catch { return; }
+            try
+            {
+                if (!File.Exists(path)) { LoadBackupHistory(); return; }
+                bool pinned = IsPinnedBackup(Path.GetFileName(path));
+                string target = pinned ? UnpinnedPath(path) : PinnedPath(path);
+                if (!string.Equals(target, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    target = MakeUniquePath(target); // never clobber an existing backup
+                    File.Move(path, target);
+                }
+                LoadBackupHistory();
+                listView.Sort();
+                Status.Text = pinned ? "Backup unpinned." : "Backup pinned. It won't be removed by automatic cleanup.";
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Pin/unpin failed: " + ex.Message);
+                MessageBox.Show("Could not change the pinned state: " + ex.Message, "Pin backup", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
