@@ -242,6 +242,11 @@ namespace Savedrake
             undoRestoreMenuItem.Click += (s, e) => UndoLastRestore();
             fileToolStripMenuItem.DropDownItems.Add(undoRestoreMenuItem);
 
+            // File menu: "Detect save folder" (QoL) — auto-find the DD2 save folder via Steam.
+            ToolStripMenuItem detectMenuItem = new ToolStripMenuItem("Detect save folder");
+            detectMenuItem.Click += (s, e) => DetectAndOfferSaveFolder(true);
+            fileToolStripMenuItem.DropDownItems.Add(detectMenuItem);
+
             // Files > Settings: opt-in "clean up old backups" toggles (change-aware autobackup, part 2). OFF by default,
             // so existing behavior (autobackup stops at the limit) is unchanged until the user opts in. Turning it on
             // asks for confirmation because it enables automatic removal of old autobackups.
@@ -1451,6 +1456,86 @@ namespace Savedrake
         private void Button_br_1_Click(object sender, EventArgs e)
         {
             PromptForFolderSelection();
+        }
+
+        // ---- Auto-detect the DD2 save folder (QoL) ----
+        private const string Dd2AppId = "2054970";
+
+        // The Steam install root from the registry, or a common default. null if not found.
+        private static string GetSteamRoot()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam"))
+                {
+                    string p = key?.GetValue("SteamPath") as string;
+                    if (!string.IsNullOrEmpty(p)) { p = p.Replace('/', '\\'); if (Directory.Exists(p)) return p; }
+                }
+            }
+            catch { }
+            try
+            {
+                string def = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Steam");
+                if (Directory.Exists(def)) return def;
+            }
+            catch { }
+            return null;
+        }
+
+        // Existing DD2 save folders under a Steam root: <root>\userdata\<id>\2054970\remote\win64_save. Most-recently-used
+        // first. Static + parameterised so the headless harness can test it against a crafted tree.
+        private static List<string> FindDd2SaveFoldersUnder(string steamRoot)
+        {
+            var found = new List<string>();
+            try
+            {
+                string userdata = Path.Combine(steamRoot, "userdata");
+                if (!Directory.Exists(userdata)) return found;
+                foreach (string profile in Directory.GetDirectories(userdata))
+                {
+                    string save = Path.Combine(profile, Dd2AppId, "remote", "win64_save");
+                    if (Directory.Exists(save)) found.Add(save);
+                }
+            }
+            catch { }
+            found.Sort((a, b) => DirLastWriteUtc(b).CompareTo(DirLastWriteUtc(a)));
+            return found;
+        }
+
+        private static DateTime DirLastWriteUtc(string d) { try { return Directory.GetLastWriteTimeUtc(d); } catch { return DateTime.MinValue; } }
+
+        private static List<string> FindDd2SaveFolders()
+        {
+            string root = GetSteamRoot();
+            return root != null ? FindDd2SaveFoldersUnder(root) : new List<string>();
+        }
+
+        // Offer the detected DD2 save folder. 'manual' = the user clicked Detect (so we tell them when nothing is found);
+        // on first run we stay quiet if there is nothing to suggest. Only SETS the folder on a Yes (never silently).
+        private void DetectAndOfferSaveFolder(bool manual)
+        {
+            List<string> found;
+            try { found = FindDd2SaveFolders(); } catch { found = new List<string>(); }
+            if (found.Count == 0)
+            {
+                if (manual)
+                    MessageBox.Show("Savedrake could not find a Dragon's Dogma 2 save folder automatically. Make sure Steam " +
+                        "is installed and you have run the game at least once, or set the folder with Browse.",
+                        "Detect save folder", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string best = found[0];
+            string extra = found.Count > 1
+                ? "\n\n(" + (found.Count - 1) + " other Steam profile" + (found.Count > 2 ? "s were" : " was") + " also found; this is the most recently used.)"
+                : "";
+            DialogResult r = MessageBox.Show(
+                "Found your Dragon's Dogma 2 saves here:\n\n" + best + extra + "\n\nUse this folder?",
+                "Detect save folder", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (r == DialogResult.Yes)
+            {
+                textbox1.Text = best;
+                Status.Text = "Save game folder set automatically.";
+            }
         }
 
         private void PromptForFolderSelection()
@@ -3723,6 +3808,8 @@ namespace Savedrake
         {
             isLoading = true;
             LoadSettings();
+            // First run: if no save folder is configured yet, offer to auto-detect the DD2 save folder via Steam.
+            if (string.IsNullOrWhiteSpace(textbox1.Text)) DetectAndOfferSaveFolder(false);
             //randomlyGeneratedToolStripMenuItem.Checked = true;
             LoadBackupHistory();
 

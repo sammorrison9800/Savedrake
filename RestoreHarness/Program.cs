@@ -95,6 +95,7 @@ namespace RestoreHarness
                 Test_TieredRetention();   // change-aware autobackup (PR2): tiered-retention selector (buckets/cap/idempotent)
                 Test_PinHelpers();   // change-aware autobackup (PR3): pin filename-token helpers (detect/add/remove/round-trip)
                 Test_UndoRestore();   // QoL: find the latest (Pre-Restore) checkpoint for one-click undo restore
+                Test_DetectSaveFolder();   // QoL: enumerate DD2 save folders under a Steam root (auto-detect)
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
@@ -546,6 +547,33 @@ namespace RestoreHarness
 
             string missing = Path.Combine(work, "undo_missing_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Check("missing folder -> null (no throw)", (string)find.Invoke(null, new object[] { missing }) == null);
+            Console.WriteLine();
+        }
+
+        static void Test_DetectSaveFolder()
+        {
+            // QoL: FindDd2SaveFoldersUnder enumerates <steamRoot>\userdata\<id>\2054970\remote\win64_save, ignores other
+            // appids, finds multiple Steam profiles, and is null-safe on a missing root.
+            Console.WriteLine("== Auto-detect DD2 save folder ==");
+            var find = SM("FindDd2SaveFoldersUnder");
+            System.Func<string, System.Collections.Generic.List<string>> F =
+                r => ((System.Collections.IEnumerable)find.Invoke(null, new object[] { r })).Cast<string>().ToList();
+
+            string root = NewDir("steam");
+            Check("no userdata folder -> empty", F(root).Count == 0);
+
+            string save1 = Path.Combine(root, "userdata", "111", "2054970", "remote", "win64_save");
+            Directory.CreateDirectory(save1);
+            var one = F(root);
+            Check("finds the one DD2 save folder", one.Count == 1 && one[0] == save1, "got=" + string.Join(",", one));
+
+            Directory.CreateDirectory(Path.Combine(root, "userdata", "222", "9999999", "remote", "win64_save"));
+            Check("ignores non-DD2 appids", F(root).Count == 1);
+
+            Directory.CreateDirectory(Path.Combine(root, "userdata", "333", "2054970", "remote", "win64_save"));
+            Check("finds both DD2 Steam profiles", F(root).Count == 2);
+
+            Check("missing steam root -> empty (no throw)", F(Path.Combine(work, "no_steam_" + Guid.NewGuid().ToString("N").Substring(0, 6))).Count == 0);
             Console.WriteLine();
         }
 
