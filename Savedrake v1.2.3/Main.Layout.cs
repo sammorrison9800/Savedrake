@@ -22,9 +22,60 @@ namespace Savedrake
         private Button _btnDelete;
         private Panel _autoSep;
         private ToolStripMenuItem _undoDeleteMenuItem;
+        private CaptionButton _btnMin, _btnClose;
         private bool _syncingSettings;
         private bool _variantBBuilt;
+        private bool _frameless = true; // borderless custom chrome (the header is the top of the window)
         private float _scale = 1f;
+
+        // ---- Frameless custom chrome ----
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        // Re-add the drop shadow the OS frame normally provides (CS_DROPSHADOW). Applied at handle creation because
+        // FormBorderStyle is None from the Designer, so _frameless is already true here.
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                if (_frameless) cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW
+                return cp;
+            }
+        }
+
+        // Hit-test the borderless window: a resize grip near every edge/corner, and a drag band over the header's
+        // background (but not over the menu or caption buttons, which return HTCLIENT so they still get clicks). Returning
+        // HTCAPTION lets Windows handle move + Aero Snap natively.
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_NCHITTEST = 0x0084;
+            if (_frameless && _header != null && m.Msg == WM_NCHITTEST && this.WindowState == FormWindowState.Normal)
+            {
+                long lp = m.LParam.ToInt64();
+                int sx = (short)(lp & 0xFFFF), sy = (short)((lp >> 16) & 0xFFFF);
+                Point pt = PointToClient(new Point(sx, sy));
+                int grip = Sx(7);
+                bool l = pt.X <= grip, r = pt.X >= ClientSize.Width - grip;
+                bool t = pt.Y <= grip, b = pt.Y >= ClientSize.Height - grip;
+                int code = 0;
+                if (t && l) code = 13; else if (t && r) code = 14; else if (b && l) code = 16; else if (b && r) code = 17;
+                else if (l) code = 10; else if (r) code = 11; else if (t) code = 12; else if (b) code = 15;
+                if (code != 0) { m.Result = (IntPtr)code; return; }
+                if (pt.Y < _header.Height)
+                {
+                    Point hp = _header.PointToClient(new Point(sx, sy));
+                    if (_header.GetChildAtPoint(hp) == null) { m.Result = (IntPtr)2; return; } // HTCAPTION
+                }
+            }
+            base.WndProc(ref m);
+        }
+
+        private void ApplyFramelessCorners()
+        {
+            // Win11 rounded corners for the borderless window (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2).
+            try { int round = 2; DwmSetWindowAttribute(this.Handle, 33, ref round, 4); } catch { }
+        }
 
         // Darkens OS-drawn bits a WinForms theme can't reach (the ListView's scrollbar). "DarkMode_Explorer" gives a
         // dark scrollbar on Win10 1809+/Win11; "Explorer" restores the normal light one for the parchment theme.
@@ -63,7 +114,16 @@ namespace Savedrake
             menuStrip1.AutoSize = false;
             menuStrip1.Size = SZ(150, 30);
             _header.Controls.Add(menuStrip1);
-            menuStrip1.Location = new Point(_header.Width - menuStrip1.Width - Sx(24), Sx(22));
+
+            // Caption buttons (minimize / close) at the very top-right corner; File/Help sits to their left.
+            int cbw = Sx(46), cbh = Sx(34);
+            _btnClose = new CaptionButton { Type = CaptionButton.Kind.Close, Size = new Size(cbw, cbh), Location = new Point(_header.Width - cbw, 0), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            _btnMin = new CaptionButton { Type = CaptionButton.Kind.Minimize, Size = new Size(cbw, cbh), Location = new Point(_header.Width - cbw * 2, 0), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            _btnClose.Click += (s, e) => this.Close();
+            _btnMin.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
+            _header.Controls.Add(_btnClose); _header.Controls.Add(_btnMin);
+
+            menuStrip1.Location = new Point(_header.Width - menuStrip1.Width - cbw * 2 - Sx(8), Sx(22));
             menuStrip1.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
             // ---- Cards ----
@@ -158,6 +218,7 @@ namespace Savedrake
             foreach (Control inner in _numKeep.Controls) { inner.BackColor = Theme.P.Input; inner.ForeColor = Theme.P.Text; }
 
             ApplyListScrollTheme();
+            ApplyFramelessCorners();
             listViewColumnResize();
         }
 

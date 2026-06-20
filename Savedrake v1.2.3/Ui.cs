@@ -182,6 +182,43 @@ namespace Savedrake
         }
     }
 
+    // A minimal themed caption button (minimize / close) for the frameless window. Painted on the header's warm bar;
+    // close turns red on hover. The window's WM_NCHITTEST returns HTCLIENT over these so they receive clicks.
+    internal sealed class CaptionButton : Control
+    {
+        internal enum Kind { Minimize, Close }
+        public Kind Type = Kind.Minimize;
+        bool _hover;
+
+        public CaptionButton()
+        {
+            // Fully paints its own background in OnPaint, so it does not need (and a raw Control does not support)
+            // a transparent BackColor.
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            TabStop = false;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            float s = DeviceDpi / 96f;
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Color bg = _hover ? (Type == Kind.Close ? Theme.P.Danger : Theme.P.Sel) : Theme.P.TitleBar;
+            using (var b = new SolidBrush(bg)) g.FillRectangle(b, ClientRectangle);
+
+            Color fg = (_hover && Type == Kind.Close) ? Color.White : Theme.P.Text;
+            int cx = Width / 2, cy = Height / 2, r = (int)(5 * s);
+            using (var pen = new Pen(fg, Math.Max(1f, 1.3f * s)))
+            {
+                if (Type == Kind.Minimize) g.DrawLine(pen, cx - r, cy, cx + r, cy);
+                else { g.DrawLine(pen, cx - r, cy - r, cx + r, cy + r); g.DrawLine(pen, cx + r, cy - r, cx - r, cy + r); }
+            }
+        }
+    }
+
     // Attaches owner-drawn rendering to a stock CheckBox so the check reads as a gold tick in a gold-tinted rounded box
     // on dark (bronze on parchment in light mode). The CheckBox keeps its native click/toggle behaviour (AutoCheck);
     // we only repaint. Re-reads Theme.P each paint, so it follows the theme toggle.
