@@ -147,7 +147,7 @@ namespace RestoreHarness
             return d;
         }
 
-        static bool IsRealSaveEntry(string n) { return (bool)SM("IsRealSaveEntry").Invoke(null, new object[] { n }); }
+        static bool IsRealSaveEntry(string n) { return (bool)CM("SaveScan", "IsRealSaveEntry").Invoke(null, new object[] { n }); }
 
         // private static bool TryParseInterval(string, out TimeSpan) — read the out-param back from the args array.
         static bool TryParseInterval(string input, out TimeSpan interval)
@@ -248,7 +248,7 @@ namespace RestoreHarness
         static void Test_MakeUniquePath()
         {
             Console.WriteLine("== MakeUniquePath (backup-name collision guard) ==");
-            var mi = SM("MakeUniquePath");
+            var mi = CM("BackupNaming", "MakeUniquePath");
             string dir = NewDir("uniq");
             string p = Path.Combine(dir, "backup_250617120000.zip");
             Check("free path returned unchanged", (string)mi.Invoke(null, new object[] { p }) == p);
@@ -458,7 +458,7 @@ namespace RestoreHarness
             // all recent backups, keep the newest per widening time bucket, honor the count cap by thinning oldest
             // survivors, be idempotent, and keep future-dated (clock-skew) backups.
             Console.WriteLine("== Change-aware autobackup: tiered retention (PR2) ==");
-            var thin = SM("SelectAutobackupsToThin");
+            var thin = CM("RetentionPolicy", "SelectAutobackupsToThin");
             long now = DateTime.UtcNow.Ticks;
             Func<long[], int, int[]> run = (ticks, cap) => (int[])thin.Invoke(null, new object[] { ticks, now, cap });
 
@@ -516,9 +516,9 @@ namespace RestoreHarness
             // it; PinnedPath/UnpinnedPath add/remove it idempotently and round-trip, and pinning must preserve the
             // autobackup name prefix so a pinned autobackup is still recognizable (just excluded from count + cleanup).
             Console.WriteLine("== Change-aware autobackup: pinning helpers (PR3) ==");
-            var isPinned = SM("IsPinnedBackup");
-            var pin = SM("PinnedPath");
-            var unpin = SM("UnpinnedPath");
+            var isPinned = CM("Pinning", "IsPinnedBackup");
+            var pin = CM("Pinning", "PinnedPath");
+            var unpin = CM("Pinning", "UnpinnedPath");
             Func<string, bool> P = n => (bool)isPinned.Invoke(null, new object[] { n });
             Func<string, string> PIN = p => (string)pin.Invoke(null, new object[] { p });
             Func<string, string> UNPIN = p => (string)unpin.Invoke(null, new object[] { p });
@@ -538,7 +538,7 @@ namespace RestoreHarness
             // Undo-restore (QoL): FindLatestPreRestoreCheckpoint returns the NEWEST "(Pre-Restore)" backup, ignoring
             // other backups, and null when there is none or the folder is missing.
             Console.WriteLine("== Undo last restore: latest pre-restore checkpoint ==");
-            var find = SM("FindLatestPreRestoreCheckpoint");
+            var find = CM("SaveScan", "FindLatestPreRestoreCheckpoint");
             string dir = NewDir("undo");
             Check("empty folder -> null", (string)find.Invoke(null, new object[] { dir }) == null);
 
@@ -565,7 +565,7 @@ namespace RestoreHarness
             // QoL: FindDd2SaveFoldersUnder enumerates <steamRoot>\userdata\<id>\2054970\remote\win64_save, ignores other
             // appids, finds multiple Steam profiles, and is null-safe on a missing root.
             Console.WriteLine("== Auto-detect DD2 save folder ==");
-            var find = SM("FindDd2SaveFoldersUnder");
+            var find = CM("SaveScan", "FindDd2SaveFoldersUnder");
             System.Func<string, System.Collections.Generic.List<string>> F =
                 r => ((System.Collections.IEnumerable)find.Invoke(null, new object[] { r })).Cast<string>().ToList();
 
@@ -607,7 +607,7 @@ namespace RestoreHarness
         {
             // QoL: BackupLocationWarning advises (returns a string) for risky backup folders, null when fine.
             Console.WriteLine("== QoL: backup-location warning ==");
-            var w = SM("BackupLocationWarning");
+            var w = CM("SaveScan", "BackupLocationWarning");
             System.Func<string, string, string> W = (s, b) => (string)w.Invoke(null, new object[] { s, b });
             Check("different local drive -> no warning", W(@"C:\Saves", @"D:\Backups") == null);
             Check("backup inside save -> warned", W(@"C:\Saves", @"C:\Saves\backups") != null);
