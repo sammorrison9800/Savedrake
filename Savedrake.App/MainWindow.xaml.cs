@@ -36,6 +36,14 @@ namespace Savedrake.App
             ApplyDwmTheming();
         }
 
+        // Tear down the view model on close so the autobackup engine's WMI game watcher, timers, and file-system
+        // watcher are stopped and disposed rather than lingering past the window.
+        protected override void OnClosed(EventArgs e)
+        {
+            (DataContext as IDisposable)?.Dispose();
+            base.OnClosed(e);
+        }
+
         // Ask DWM to round corners, go dark, and tint the caption to our bar color. Each call is guarded:
         // older Windows builds simply return a non-zero HRESULT, which we ignore.
         private void ApplyDwmTheming()
