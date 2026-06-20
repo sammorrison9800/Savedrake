@@ -93,6 +93,7 @@ namespace RestoreHarness
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
                 Test_ChangeFingerprint();   // change-aware autobackup (PR1): save fingerprint is stable/changes/fail-closed
                 Test_TieredRetention();   // change-aware autobackup (PR2): tiered-retention selector (buckets/cap/idempotent)
+                Test_PinHelpers();   // change-aware autobackup (PR3): pin filename-token helpers (detect/add/remove/round-trip)
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
@@ -494,6 +495,29 @@ namespace RestoreHarness
 
             // A future-dated backup (clock skew) is kept, as is an old one alone in its weekly bucket.
             Check("a future-dated backup is kept (treated as newest)", run(new long[] { now + TimeSpan.FromHours(1).Ticks, now - TimeSpan.FromDays(30).Ticks }, 0).Length == 0);
+            Console.WriteLine();
+        }
+
+        static void Test_PinHelpers()
+        {
+            // Change-aware autobackup (PR3): pinning is marked by a " [PINNED]" filename token. IsPinnedBackup detects
+            // it; PinnedPath/UnpinnedPath add/remove it idempotently and round-trip, and pinning must preserve the
+            // autobackup name prefix so a pinned autobackup is still recognizable (just excluded from count + cleanup).
+            Console.WriteLine("== Change-aware autobackup: pinning helpers (PR3) ==");
+            var isPinned = SM("IsPinnedBackup");
+            var pin = SM("PinnedPath");
+            var unpin = SM("UnpinnedPath");
+            Func<string, bool> P = n => (bool)isPinned.Invoke(null, new object[] { n });
+            Func<string, string> PIN = p => (string)pin.Invoke(null, new object[] { p });
+            Func<string, string> UNPIN = p => (string)unpin.Invoke(null, new object[] { p });
+
+            Check("a name with the token is pinned", P("autobackup_240620 [PINNED].zip"));
+            Check("a plain name is not pinned", !P("autobackup_240620.zip"));
+            Check("PinnedPath inserts the token before the extension", PIN("C:\\b\\foo.zip") == "C:\\b\\foo [PINNED].zip");
+            Check("PinnedPath is idempotent", PIN("C:\\b\\foo [PINNED].zip") == "C:\\b\\foo [PINNED].zip");
+            Check("UnpinnedPath strips the token", UNPIN("C:\\b\\foo [PINNED].zip") == "C:\\b\\foo.zip");
+            Check("pin keeps the autobackup name prefix", Path.GetFileName(PIN("C:\\b\\autobackup_1.zip")).StartsWith("auto"));
+            Check("pin -> unpin round-trips to the original", UNPIN(PIN("C:\\b\\(Auto) save 3.zip")) == "C:\\b\\(Auto) save 3.zip");
             Console.WriteLine();
         }
 
