@@ -81,6 +81,9 @@ All notable changes to Savedrake are recorded here. The format is based on
 - The window is now borderless: the branded header is the top of the window (no separate OS title bar), with themed
   minimize and close buttons in the top-right corner and rounded corners on Windows 11. The window can still be moved by
   dragging the header and resized from any edge or corner. (#54)
+- The window now always opens fully on screen: it is sized to fit the monitor's work area and nudged away from the
+  edges, so on a shorter screen the bottom (status bar and resize edge) is no longer hidden behind the taskbar. The
+  backup list shrinks to fit. (#55)
 - The window title bar now follows the theme too (charcoal in dark, parchment in light) on Windows 11, so the whole
   window is cohesive. On Windows 10 the title bar matches dark/light mode; only a few Windows-managed bits (e.g.
   scrollbars) keep the system colour. (#52)
