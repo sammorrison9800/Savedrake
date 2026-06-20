@@ -39,6 +39,12 @@ All notable changes to Savedrake are recorded here. The format is based on
   your save has not changed since the last one. Each backup records a content fingerprint of the save, and
   a timer tick that finds no change is skipped instead of consuming one of your autobackup slots. A
   just-restored save, and a save folder that is momentarily locked or mid-write, are handled safely. (#44)
+- Automatically clean up old autobackups (optional, off by default): a new Files > Settings option that, once
+  turned on, keeps all of your recent autobackups and a spread of older ones and removes the extra older
+  autobackups so they no longer just stop at the limit and so old restore points are not lost the way a plain
+  "keep the newest N" limit loses them. Your manual backups and the pre-restore checkpoint are never removed,
+  and a backup that fails its integrity check is never removed. Removed backups are deleted by default, or sent
+  to the Recycle Bin if you tick the second option. (#45)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment
