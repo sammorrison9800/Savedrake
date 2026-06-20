@@ -58,6 +58,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   automatically just before every restore, so a restore you regret is one click to reverse. It runs through the same
   safety checks as a normal restore (and snapshots your current save first, so you can redo). The restore prompt now
   also tells you the snapshot is taken. (#48)
+- Auto-detect your save folder: on first run (when no save folder is set yet) Savedrake offers the Dragon's Dogma 2
+  save folder it finds via Steam, so new users no longer have to hunt down the cryptic `…\userdata\<id>\2054970\
+  remote\win64_save` path. If you have more than one Steam profile it picks the most recently used and tells you.
+  There is also a File > Detect save folder you can run any time. It only ever fills the folder in after you confirm. (#49)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment
