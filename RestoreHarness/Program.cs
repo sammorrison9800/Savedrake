@@ -1,12 +1,37 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Text;
+using Savedrake; // compile-time reference to Savedrake.Core for the end-to-end RestoreService flow test
 
 namespace RestoreHarness
 {
+    // Recording stubs for the Core service seams, used by Test_RestoreServiceFlow to drive the REAL
+    // RestoreService.Restore orchestration headlessly. Confirm returns a configurable bool (default true);
+    // Info/Warn/Error and Set record their text so the test can assert no error dialog fired.
+    internal sealed class StubDialog : IDialogService
+    {
+        public bool ConfirmResult = true;
+        public readonly List<string> Confirms = new List<string>();
+        public readonly List<string> Infos = new List<string>();
+        public readonly List<string> Warns = new List<string>();
+        public readonly List<string> Errors = new List<string>();
+        public bool Confirm(string title, string message) { Confirms.Add(title + " | " + message); return ConfirmResult; }
+        public void Info(string title, string message) { Infos.Add(title + " | " + message); }
+        public void Warn(string title, string message) { Warns.Add(title + " | " + message); }
+        public void Error(string title, string message) { Errors.Add(title + " | " + message); }
+    }
+
+    internal sealed class StubStatus : IStatusSink
+    {
+        public readonly List<string> Lines = new List<string>();
+        public string Last { get { return Lines.Count > 0 ? Lines[Lines.Count - 1] : null; } }
+        public void Set(string text) { Lines.Add(text); }
+    }
+
     // Headless reflection harness for Savedrake's transactional-restore helpers.
     // Loads the REAL compiled Savedrake.exe and invokes the actual private methods
     // (static + UI-free instance methods via an uninitialized Main instance) against
@@ -110,6 +135,7 @@ namespace RestoreHarness
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
                 Test_DiskPreflight();   // disk-space preflight helpers (size math + free-space check, fail-open)
+                Test_RestoreServiceFlow();   // Phase 4a: the REAL Core RestoreService.Restore orchestration end-to-end
             }
             catch (Exception ex)
             {
@@ -726,6 +752,67 @@ namespace RestoreHarness
             object[] a3 = { @"\\nonexistent-share-xyz\nope", 1000L, null };
             bool r3 = (bool)hasSpace.Invoke(null, a3);
             Check("undeterminable volume -> fails open (true)", r3);
+            Console.WriteLine();
+        }
+
+        // Phase 4a: exercise the REAL Savedrake.Core orchestration (RestoreService.Restore) end-to-end through its
+        // service seams, with stub IDialogService/IStatusSink. Stronger than the file-level happy-path mirror: it runs
+        // the actual prompt/guard sequence + the transactional swap as the future WPF app will call them. Compile-time
+        // referenced (not reflected), so the call site is the genuine public API.
+        static void Test_RestoreServiceFlow()
+        {
+            Console.WriteLine("== RestoreService.Restore end-to-end (real Core orchestration) ==");
+
+            // A real DD2-style live folder (...\remote\win64_save) holding OLD save data.
+            string remote = NewDir("rsf_remote");
+            string live = Path.Combine(remote, "win64_save");
+            Directory.CreateDirectory(live);
+            File.WriteAllText(Path.Combine(live, "data000.bin"), "OLD-DATA");
+            File.WriteAllText(Path.Combine(live, "system.bin"), "OLD-SYS");
+
+            // A separate backup folder, and a valid backup zip carrying NEW content + an integrity manifest (so the
+            // P1 read-side gate sees a matching manifest and does NOT block).
+            string backupDir = NewDir("rsf_backup");
+            string srcForManifest = NewDir("rsf_src");
+            File.WriteAllText(Path.Combine(srcForManifest, "data000.bin"), "NEW-DATA");
+            File.WriteAllText(Path.Combine(srcForManifest, "system.bin"), "NEW-SYS");
+            string manifest = (string)CM("Manifest", "BuildBackupManifest").Invoke(null, new object[] { srcForManifest });
+            string backupZip = Path.Combine(backupDir, "newsave.zip");
+            MakeZip(backupZip, z =>
+            {
+                z.AddEntry("data000.bin", B("NEW-DATA"));
+                z.AddEntry("system.bin", B("NEW-SYS"));
+                z.AddEntry("_savedrake/manifest.json", B(manifest));
+            });
+
+            var dialog = new StubDialog { ConfirmResult = true }; // auto-Yes to the Steam Cloud + any checkpoint prompt
+            var status = new StubStatus();
+
+            RestoreResult res = RestoreService.Restore(
+                new RestoreRequest
+                {
+                    BackupZipPath = backupZip,
+                    LiveSaveDir = live,
+                    BackupDir = backupDir,
+                    GameRunning = false
+                },
+                dialog, status);
+
+            Check("RestoreService: result.Ok is true", res.Ok, "msg=" + res.Message + " errors=" + string.Join(" ;; ", dialog.Errors));
+            Check("RestoreService: result not Cancelled", !res.Cancelled);
+            Check("RestoreService: no Error dialog fired", dialog.Errors.Count == 0, "errors=" + string.Join(" ;; ", dialog.Errors));
+            Check("RestoreService: data000.bin now holds NEW content",
+                File.Exists(Path.Combine(live, "data000.bin")) && File.ReadAllText(Path.Combine(live, "data000.bin")) == "NEW-DATA");
+            Check("RestoreService: system.bin now holds NEW content",
+                File.Exists(Path.Combine(live, "system.bin")) && File.ReadAllText(Path.Combine(live, "system.bin")) == "NEW-SYS");
+
+            string[] checkpoints = Directory.GetFiles(backupDir, "(Pre-Restore)*.zip");
+            Check("RestoreService: a (Pre-Restore) checkpoint zip was created", checkpoints.Length == 1, "found " + checkpoints.Length);
+
+            bool noTempDirs = Directory.GetDirectories(remote).All(d => !Path.GetFileName(d).StartsWith("._savedrake"));
+            Check("RestoreService: staging/rollback temp dirs cleaned up", noTempDirs,
+                "leftover=" + string.Join(",", Directory.GetDirectories(remote).Select(Path.GetFileName)));
+            Check("RestoreService: final status is 'Restore successful.'", status.Last == "Restore successful.", "last=" + status.Last);
             Console.WriteLine();
         }
 

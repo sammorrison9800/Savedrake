@@ -24,6 +24,16 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
   </ItemGroup>
+  <!-- Compile-time reference to Savedrake.Core so Test_RestoreServiceFlow can implement the Core service interfaces
+       (IDialogService / IStatusSink) and call RestoreService.Restore directly, exercising the REAL Core orchestration
+       end-to-end. The rest of the harness still loads Core by reflection from the app's bin (AssemblyResolve);
+       MSBuild also copies Core's dll next to this exe, which is byte-identical code built from the same source. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Savedrake.Core\Savedrake.Core.csproj">
+      <Project>{B2E4B7A1-3C5D-4E6F-A1B2-C3D4E5F60718}</Project>
+      <Name>Savedrake.Core</Name>
+    </ProjectReference>
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
   </ItemGroup>
