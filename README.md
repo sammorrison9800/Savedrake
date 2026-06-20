@@ -26,7 +26,8 @@ Windows only. Built on .NET Framework 4.8 (WinForms).
   Bin, and the last deletion can be undone.
 - Sound feedback on every backup (manual, hotkey, and autobackup).
 - Minimize to the system tray.
-- Auto update. Savedrake checks GitHub for new versions and can update itself.
+- Update checks. Savedrake can check GitHub for new releases and notify you. Downloading and
+  installing an update is manual: you choose when, and confirm before any file is replaced.
 
 ## Install
 
