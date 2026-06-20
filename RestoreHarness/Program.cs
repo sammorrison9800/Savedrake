@@ -307,7 +307,7 @@ namespace RestoreHarness
             // P1 layer 1: a freshly written backup is CRC-verified (IsZipFile testExtract) before it is published;
             // truncated/corrupt/missing archives are rejected at creation. VerifyZipRestorable(string, out string) static.
             Console.WriteLine("== Backup integrity: verify-on-create (P1) ==");
-            var mi = SM("VerifyZipRestorable");
+            var mi = CM("Manifest", "VerifyZipRestorable");
 
             string good = Path.Combine(work, "verify_good.zip");
             MakeZip(good, z => { z.AddEntry("data000.bin", B("savedata")); z.AddEntry("system.bin", B("sys")); });
@@ -347,8 +347,8 @@ namespace RestoreHarness
             // P1 layer 2: backups carry an in-zip integrity manifest (path/length/sha256 per file). Verify catches a
             // missing or corrupted file; restore must SKIP the manifest so it never lands in the live save folder.
             Console.WriteLine("== Backup integrity: manifest verify (P1 layer 2) ==");
-            var build = SM("BuildBackupManifest");
-            var verify = SM("VerifyZipAgainstManifest");
+            var build = CM("Manifest", "BuildBackupManifest");
+            var verify = CM("Manifest", "VerifyZipAgainstManifest");
             var extract = IM("ExtractZipToStaging");
 
             string src = NewDir("man_src");
@@ -393,9 +393,9 @@ namespace RestoreHarness
             // volatile createdUtc/tool), CHANGE on any real content change, be enumeration-ORDER independent, and return
             // null (fail-closed) for a missing / locked / no-save-data folder.
             Console.WriteLine("== Change-aware autobackup: save fingerprint ==");
-            var fp = SM("ComputeSaveFingerprint");
-            var stable = SM("StableManifestHash");
-            var build = SM("BuildBackupManifest");
+            var fp = CM("Fingerprint", "ComputeSaveFingerprint");
+            var stable = CM("Manifest", "StableManifestHash");
+            var build = CM("Manifest", "BuildBackupManifest");
 
             string src = NewDir("fp_src");
             File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("save-A"));
@@ -625,12 +625,12 @@ namespace RestoreHarness
             // P1 read-side gate: a manifest-bearing backup that no longer matches its hashes is blocked before a
             // restore touches the live saves; a legacy backup (no manifest) is never blocked. Both helpers are static.
             Console.WriteLine("== Backup integrity: re-verify on restore (P1) ==");
-            var hasMan = SM("HasManifest");
-            var blocked = SM("RestoreBlockedByManifest");
+            var hasMan = CM("Manifest", "HasManifest");
+            var blocked = CM("Manifest", "RestoreBlockedByManifest");
 
             string src = NewDir("rv_src");
             File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("the-save"));
-            string manifest = (string)SM("BuildBackupManifest").Invoke(null, new object[] { src });
+            string manifest = (string)CM("Manifest", "BuildBackupManifest").Invoke(null, new object[] { src });
 
             string good = Path.Combine(work, "rv_good.zip");
             MakeZip(good, z => { z.AddDirectory(src); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
@@ -655,10 +655,10 @@ namespace RestoreHarness
         {
             // P1 UI: full classification used by "Validate all backups" -> "Validated" / "Legacy" / "Corrupt".
             Console.WriteLine("== Backup integrity: full classification (P1 UI) ==");
-            var classify = SM("ClassifyBackupFully");
+            var classify = CM("Manifest", "ClassifyBackupFully");
             string src = NewDir("cls_src");
             File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("the-save"));
-            string manifest = (string)SM("BuildBackupManifest").Invoke(null, new object[] { src });
+            string manifest = (string)CM("Manifest", "BuildBackupManifest").Invoke(null, new object[] { src });
 
             string good = Path.Combine(work, "cls_good.zip");
             MakeZip(good, z => { z.AddDirectory(src); z.AddEntry("_savedrake/manifest.json", B(manifest)); });
@@ -700,9 +700,9 @@ namespace RestoreHarness
             // Disk-space preflight helpers. GetDirectorySize / GetZipUncompressedSize are pure size math;
             // HasFreeSpaceFor checks the volume and FAILS OPEN when the volume can't be determined.
             Console.WriteLine("== Disk-space preflight ==");
-            var dirSize = SM("GetDirectorySize");
-            var zipSize = SM("GetZipUncompressedSize");
-            var hasSpace = SM("HasFreeSpaceFor");
+            var dirSize = CM("DiskPreflight", "GetDirectorySize");
+            var zipSize = CM("DiskPreflight", "GetZipUncompressedSize");
+            var hasSpace = CM("DiskPreflight", "HasFreeSpaceFor");
 
             string d = NewDir("ds");
             File.WriteAllBytes(Path.Combine(d, "a.bin"), new byte[1000]);

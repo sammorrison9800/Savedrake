@@ -16,4 +16,11 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 
+  <!-- Versions pinned to match the WinForms app's packages.config so the whole solution loads one Ionic.Zip /
+       Newtonsoft.Json. Used by the integrity / manifest / fingerprint logic extracted in migration phase 0b. -->
+  <ItemGroup>
+    <PackageReference Include="DotNetZip" Version="1.16.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
 </Project>
