@@ -873,54 +873,10 @@ namespace Savedrake
         //  - the number is parsed with InvariantCulture over ASCII [0-9] only, so a non-US Windows
         //    locale (different digit grouping / digit script) can't make int parsing throw or misread.
         // Returns false (rather than throwing) for anything unrecognized or out of TimeSpan range.
-        private static readonly Regex IntervalRegex = new Regex(
-            @"^\s*(?<num>[0-9]+)\s*(?<unit>minutes|minute|mins|min|hours|hour|hrs|hr)\s*$",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-        private static bool TryParseInterval(string input, out TimeSpan interval)
-        {
-            interval = TimeSpan.Zero;
-            if (string.IsNullOrWhiteSpace(input))
-                return false;
-
-            Match m = IntervalRegex.Match(input);
-            if (!m.Success)
-                return false;
-
-            // NumberStyles.None: the regex already isolated bare ASCII digits, so disallow sign/whitespace.
-            if (!int.TryParse(m.Groups["num"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int value))
-                return false; // too many digits to fit an int, etc.
-
-            bool isHours = m.Groups["unit"].Value.ToLowerInvariant()[0] == 'h';
-            try
-            {
-                interval = isHours ? TimeSpan.FromHours(value) : TimeSpan.FromMinutes(value);
-            }
-            catch (OverflowException)
-            {
-                interval = TimeSpan.Zero;
-                return false; // absurdly large value that overflows TimeSpan
-            }
-            return true;
-        }
-
-        // Canonical spelling for a recognized interval, PRESERVING the user's unit (no minutes<->hours
-        // conversion): "5min"/"5 Minutes"/"5  minutes" -> "5 minutes", "1 Hr" -> "1 hour", "2 hr" -> "2 hours".
-        // Lets the broadened input grammar collapse case/abbreviation/spacing variants onto a single list item
-        // instead of accumulating semantic duplicates. Returns the input unchanged if it isn't an interval.
-        private static string CanonicalizeInterval(string input)
-        {
-            Match m = IntervalRegex.Match(input ?? string.Empty);
-            if (!m.Success)
-                return input;
-            if (!int.TryParse(m.Groups["num"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int value))
-                return input;
-
-            bool isHours = m.Groups["unit"].Value.ToLowerInvariant()[0] == 'h';
-            if (isHours)
-                return value == 1 ? "1 hour" : value + " hours";
-            return value == 1 ? "1 minute" : value + " minutes";
-        }
+        // Interval parsing moved to Savedrake.Core.IntervalParser (WPF migration, Phase 1). Thin forwarders keep the
+        // existing call sites (ParseToTimeSpan / ProcessText / the combobox validation) unchanged.
+        private static bool TryParseInterval(string input, out TimeSpan interval) => IntervalParser.TryParse(input, out interval);
+        private static string CanonicalizeInterval(string input) => IntervalParser.Canonicalize(input);
 
         private TimeSpan ParseToTimeSpan(string s)
         {
@@ -973,7 +929,7 @@ namespace Savedrake
             // grammar accepted by combobox_auto_Validating would let those forms be added as permanent
             // duplicate ComboBox items (persisted via ComboboxList). Units are preserved; non-interval text
             // falls through to the legacy word-level normalization below.
-            if (IntervalRegex.IsMatch(text ?? string.Empty))
+            if (IntervalParser.IsInterval(text))
                 return CanonicalizeInterval(text);
 
             // Replace whole word "min" with "minutes"
@@ -1556,17 +1512,7 @@ namespace Savedrake
         // QoL: a human-friendly relative time for the backup list ("just now", "5 min ago", "2 hours ago", "yesterday",
         // "3 days ago", else an absolute date). DISPLAY ONLY — the list still sorts by the FileInfo in each row's Tag
         // (ListViewItemDateComparer), so changing this text never affects ordering.
-        private static string FriendlyTime(DateTime when)
-        {
-            TimeSpan ago = DateTime.Now - when;
-            if (ago < TimeSpan.Zero) return when.ToString("MMM d, h:mm tt");
-            if (ago.TotalSeconds < 45) return "just now";
-            if (ago.TotalMinutes < 60) return (int)Math.Round(ago.TotalMinutes) + " min ago";
-            if (ago.TotalHours < 24) { int h = (int)Math.Round(ago.TotalHours); return h + (h == 1 ? " hour ago" : " hours ago"); }
-            if (ago.TotalDays < 2) return "yesterday";
-            if (ago.TotalDays < 8) return (int)ago.TotalDays + " days ago";
-            return when.ToString("MMM d, h:mm tt");
-        }
+        private static string FriendlyTime(DateTime when) => TimeText.Friendly(when); // moved to Savedrake.Core.TimeText
 
         // QoL: a one-line caution about a chosen backup folder, or null if it's fine. Advisory, not blocking. Flags a
         // backup folder inside the save folder, in a cloud-synced folder (OneDrive/Dropbox/Google Drive — sync churn),

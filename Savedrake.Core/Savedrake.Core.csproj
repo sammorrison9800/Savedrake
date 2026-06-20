@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Savedrake.Core: a UI-agnostic class library holding the app's portable logic (no WinForms, no WPF).
+    Step one of the WinForms -> WPF migration. The WinForms app and the WPF app (later) both reference it, and the
+    RestoreHarness loads it by reflection. Types stay in the `Savedrake` namespace so the existing app call sites do
+    not have to change. Targets net48 + C# 7.3 to match the rest of the solution (no new runtime).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>Savedrake</RootNamespace>
+    <AssemblyName>Savedrake.Core</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <Deterministic>true</Deterministic>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+</Project>

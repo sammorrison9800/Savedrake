@@ -104,6 +104,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Savedrake.Core\Savedrake.Core.csproj">
+      <Project>{B2E4B7A1-3C5D-4E6F-A1B2-C3D4E5F60718}</Project>
+      <Name>Savedrake.Core</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="ListViewDataComparer.cs" />
     <Compile Include="Theme.cs" />
     <Compile Include="Ui.cs" />
