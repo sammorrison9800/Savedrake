@@ -813,6 +813,9 @@ namespace RestoreHarness
             Check("RestoreService: staging/rollback temp dirs cleaned up", noTempDirs,
                 "leftover=" + string.Join(",", Directory.GetDirectories(remote).Select(Path.GetFileName)));
             Check("RestoreService: final status is 'Restore successful.'", status.Last == "Restore successful.", "last=" + status.Last);
+            Check("RestoreService: the Steam-Cloud confirm was prompted", dialog.Confirms.Count >= 1, "confirms=" + dialog.Confirms.Count);
+            Check("RestoreService: a success Info dialog was shown", dialog.Infos.Count >= 1, "infos=" + string.Join(" ;; ", dialog.Infos));
+            Check("RestoreService: no Warning dialog on the happy path", dialog.Warns.Count == 0, "warns=" + string.Join(" ;; ", dialog.Warns));
             Console.WriteLine();
         }
 
