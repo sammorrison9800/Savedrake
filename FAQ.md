@@ -51,7 +51,7 @@ go to the Recycle Bin, and the last deletion can be undone.
 
 ## I updated, but the updater still seems old.
 
-The updater program cannot replace itself during an auto-update, so it stays on the version you
+The updater program cannot replace itself while it applies an update, so it stays on the version you
 installed. To get the latest updater, download the release zip and extract it over your install
 once.
 

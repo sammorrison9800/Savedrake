@@ -25,9 +25,9 @@ disclosing the issue publicly.
 
 ## Scope
 
-Savedrake reads and writes save files, and it downloads and runs its own updates from GitHub
-Releases over HTTPS. Reports about the backup and restore flow, or about the auto-update flow, are
-especially welcome.
+Savedrake reads and writes save files, and it can download and install updates from GitHub
+Releases over HTTPS when you choose to update. Reports about the backup and restore flow, or about
+the update flow, are especially welcome.
 
 Known limitation: the updater verifies that a downloaded update is a valid package containing the
 application, but it does not yet verify a cryptographic signature of the package. Signed updates
