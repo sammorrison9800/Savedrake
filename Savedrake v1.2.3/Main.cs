@@ -61,6 +61,7 @@ namespace Savedrake
         // while WE write the save folder (restore) so our own writes never trigger a backup. The interval timer stays
         // on as a fallback, so a missed/overflowed watcher event is still caught.
         private ToolStripMenuItem _backupOnSaveMenuItem;
+        private ToolStripMenuItem _themeMenuItem; // light/dark toggle
         private FileSystemWatcher _saveWatcher;
         private System.Windows.Forms.Timer _quiesceTimer;
         private volatile bool _suppressSaveWatcher;
@@ -218,6 +219,10 @@ namespace Savedrake
             listView.AfterLabelEdit += listView_AfterLabelEdit;
             listView.ContextMenuStrip = contextMenuStrip;
             listView.KeyDown += ListView_KeyDown;
+            // Theme: owner-draw the backup list so it matches the dark/light palette.
+            listView.DrawColumnHeader += listView_DrawColumnHeader;
+            listView.DrawItem += listView_DrawItem;
+            listView.DrawSubItem += listView_DrawSubItem;
 
             // Integrity column (P1): per-backup state. On load it shows "Protected"/"Legacy" (cheap manifest-presence
             // check); the right-click "Validate all backups" action runs the full hash check and marks each row
@@ -246,6 +251,11 @@ namespace Savedrake
             ToolStripMenuItem detectMenuItem = new ToolStripMenuItem("Detect save folder");
             detectMenuItem.Click += (s, e) => DetectAndOfferSaveFolder(true);
             fileToolStripMenuItem.DropDownItems.Add(detectMenuItem);
+
+            // File menu: light/dark theme toggle.
+            _themeMenuItem = new ToolStripMenuItem();
+            _themeMenuItem.Click += (s, e) => ToggleTheme();
+            fileToolStripMenuItem.DropDownItems.Add(_themeMenuItem);
 
             // Files > Settings: opt-in "clean up old backups" toggles (change-aware autobackup, part 2). OFF by default,
             // so existing behavior (autobackup stops at the limit) is unchanged until the user opts in. Turning it on
@@ -397,6 +407,9 @@ namespace Savedrake
             [XmlElement("BackupOnSaveChange")]
             public bool BackupOnSaveChange { get; set; }
 
+            [XmlElement("ThemeMode")]
+            public string ThemeMode { get; set; }
+
 
 
             // Include HotkeySettings property
@@ -536,6 +549,7 @@ namespace Savedrake
                 AutoCleanupOldBackups = _cleanupMenuItem != null && _cleanupMenuItem.Checked,
                 RemovedToRecycleBin = _recycleMenuItem != null && _recycleMenuItem.Checked,
                 BackupOnSaveChange = _backupOnSaveMenuItem != null && _backupOnSaveMenuItem.Checked,
+                ThemeMode = Theme.Current == Theme.Mode.Light ? "Light" : "Dark",
                 
                 // Save the hotkey settings
                 Hotkey = new HotkeySettings
@@ -662,6 +676,7 @@ namespace Savedrake
                 _recycleMenuItem.Enabled = _cleanupMenuItem.Checked;
             }
             if (_backupOnSaveMenuItem != null) _backupOnSaveMenuItem.Checked = settings.BackupOnSaveChange;
+            Theme.Current = string.Equals(settings.ThemeMode, "Light", StringComparison.OrdinalIgnoreCase) ? Theme.Mode.Light : Theme.Mode.Dark;
 
 
 
@@ -1113,8 +1128,8 @@ namespace Savedrake
                     combobox_auto.Enabled = false;
                     Button_br_1.Enabled = false;
                     Button_br_2.Enabled = false;
-                    Button_br_1.BackColor = System.Drawing.ColorTranslator.FromHtml("#f0f0f0");
-                    Button_br_2.BackColor = System.Drawing.ColorTranslator.FromHtml("#f0f0f0");
+                    Button_br_1.BackColor = Theme.P.PanelAlt;
+                    Button_br_2.BackColor = Theme.P.PanelAlt;
                 }
             }
             else
@@ -1124,8 +1139,8 @@ namespace Savedrake
                 combobox_auto.Enabled = true;
                 Button_br_1.Enabled = true;
                 Button_br_2.Enabled = true;
-                Button_br_1.BackColor = Color.White;
-                Button_br_2.BackColor= Color.White;
+                Button_br_1.BackColor = Theme.P.Panel;
+                Button_br_2.BackColor = Theme.P.Panel;
                 Status.Text = $"Autobackup disabled";
                 // Change-aware autobackup (PR1): drop the baseline when autobackup is turned off so a later re-enable
                 // re-baselines cleanly against whatever the save folder is then (Hook C also nulls it at game-start).
@@ -1579,6 +1594,59 @@ namespace Savedrake
                 return null;
             }
             catch { return null; }
+        }
+
+        // ---- UI theme (dark/light) ----
+        private void UpdateThemeMenuText()
+        {
+            if (_themeMenuItem != null)
+                _themeMenuItem.Text = Theme.Current == Theme.Mode.Dark ? "Use light theme" : "Use dark theme";
+        }
+
+        private void ToggleTheme()
+        {
+            Theme.Current = Theme.Current == Theme.Mode.Dark ? Theme.Mode.Light : Theme.Mode.Dark;
+            Theme.Apply(this);
+            UpdateThemeMenuText();
+            listView.Refresh();
+            try { SaveSettings(); } catch { }
+        }
+
+        private void listView_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
+        {
+            using (var bg = new SolidBrush(Theme.P.TitleBar)) e.Graphics.FillRectangle(bg, e.Bounds);
+            Rectangle r = e.Bounds; r.X += 6; r.Width -= 6;
+            TextRenderer.DrawText(e.Graphics, e.Header.Text, listView.Font, r, Theme.P.TextSecondary,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            using (var pen = new Pen(Theme.P.Border)) e.Graphics.DrawLine(pen, e.Bounds.Right - 1, e.Bounds.Top, e.Bounds.Right - 1, e.Bounds.Bottom);
+        }
+
+        private void listView_DrawItem(object sender, DrawListViewItemEventArgs e)
+        {
+            // Details owner-draw: every cell is painted in DrawSubItem; suppress the default item render (which would
+            // otherwise draw the row first with the cached SubItem colours, causing flicker and a stray light row).
+            e.DrawDefault = false;
+        }
+
+        private void listView_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
+        {
+            Color back = e.Item.Selected ? Theme.P.Sel : (e.ItemIndex % 2 == 0 ? Theme.P.Panel : Theme.P.PanelAlt);
+            using (var b = new SolidBrush(back)) e.Graphics.FillRectangle(b, e.Bounds);
+
+            Color fore = Theme.P.Text;
+            if (e.ColumnIndex == 2) fore = StatusColor(e.SubItem.Text);
+            else if (e.ColumnIndex == 0 && IsPinnedBackup(e.Item.Text)) fore = Theme.P.Pinned;
+
+            Rectangle r = e.Bounds; r.X += 6; r.Width -= 6;
+            TextRenderer.DrawText(e.Graphics, e.SubItem.Text, listView.Font, r, fore,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+
+        private static Color StatusColor(string s)
+        {
+            if (s == "Validated" || s == "Protected") return Theme.P.Success;
+            if (s == "Corrupt" || s == "Missing") return Theme.P.Danger;
+            return Theme.P.TextSecondary;
         }
 
         private void PromptForFolderSelection()
@@ -2963,7 +3031,7 @@ namespace Savedrake
                         ListViewItem item = new ListViewItem(new[] { fileInfo.Name, FriendlyTime(fileInfo.CreationTime),
                             hasManifest ? "Protected" : "Legacy" });
                         item.UseItemStyleForSubItems = false;
-                        item.SubItems[2].ForeColor = hasManifest ? System.Drawing.Color.SteelBlue : System.Drawing.Color.Gray;
+                        // Integrity-column colour is applied by the owner-draw renderer (StatusColor), so it follows the theme.
                         item.Tag = fileInfo; // Store the FileInfo object in the Tag property
                         listView.Items.Add(item);
                         listView.Sort();
@@ -3022,9 +3090,10 @@ namespace Savedrake
                     while (item.SubItems.Count < 3) item.SubItems.Add(string.Empty);
                     item.UseItemStyleForSubItems = false;
                     item.SubItems[2].Text = state;
-                    if (state == "Validated") { validated++; item.SubItems[2].ForeColor = System.Drawing.Color.ForestGreen; }
-                    else if (state == "Legacy") { legacy++; item.SubItems[2].ForeColor = System.Drawing.Color.Gray; }
-                    else { failed++; item.SubItems[2].ForeColor = System.Drawing.Color.Firebrick; }
+                    // Colour comes from the owner-draw renderer (StatusColor), theme-aware; just tally here.
+                    if (state == "Validated") validated++;
+                    else if (state == "Legacy") legacy++;
+                    else failed++;
                 }
             }
             finally { Cursor.Current = previous; }
@@ -3339,9 +3408,8 @@ namespace Savedrake
             // Enable the button if there are files in the deletedFiles list, otherwise disable it
             button_undo.Enabled = deletedFiles.Count > 0;
 
-            // Set the button's background color
-            button_undo.BackColor = deletedFiles.Count < 0 ? System.Drawing.ColorTranslator.FromHtml("#f0f0f0") : System.Drawing.Color.Transparent;
-            button_undo.BackColor = deletedFiles.Count > 0 ? Color.White : System.Drawing.Color.Transparent;
+            // Theme-aware background (enabled = panel, disabled = dimmer panel).
+            button_undo.BackColor = button_undo.Enabled ? Theme.P.Panel : Theme.P.PanelAlt;
         }
 
 
@@ -3857,6 +3925,9 @@ namespace Savedrake
             LoadSettings();
             // First run: if no save folder is configured yet, offer to auto-detect the DD2 save folder via Steam.
             if (string.IsNullOrWhiteSpace(textbox1.Text)) DetectAndOfferSaveFolder(false);
+            // Apply the saved UI theme (default dark) before the list populates so it owner-draws themed.
+            Theme.Apply(this);
+            UpdateThemeMenuText();
             //randomlyGeneratedToolStripMenuItem.Checked = true;
             LoadBackupHistory();
 
