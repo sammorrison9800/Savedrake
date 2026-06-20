@@ -54,6 +54,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   timer interval. The interval timer keeps running as a fallback, and the watcher pauses while you restore so it never
   backs up the save you just restored. Combine it with the automatic cleanup above for a tidy, up-to-the-moment
   history. (#47)
+- Undo last restore: a new File > Undo last restore that rolls your save back to the snapshot Savedrake takes
+  automatically just before every restore, so a restore you regret is one click to reverse. It runs through the same
+  safety checks as a normal restore (and snapshots your current save first, so you can redo). The restore prompt now
+  also tells you the snapshot is taken. (#48)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment

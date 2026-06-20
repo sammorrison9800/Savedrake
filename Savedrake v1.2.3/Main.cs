@@ -237,6 +237,11 @@ namespace Savedrake
             };
             helpToolStripMenuItem.DropDownItems.Add(openLogFolderMenuItem);
 
+            // File menu: "Undo last restore" (QoL) — roll the live save back to the automatic pre-restore snapshot.
+            ToolStripMenuItem undoRestoreMenuItem = new ToolStripMenuItem("Undo last restore");
+            undoRestoreMenuItem.Click += (s, e) => UndoLastRestore();
+            fileToolStripMenuItem.DropDownItems.Add(undoRestoreMenuItem);
+
             // Files > Settings: opt-in "clean up old backups" toggles (change-aware autobackup, part 2). OFF by default,
             // so existing behavior (autobackup stops at the limit) is unchanged until the user opts in. Turning it on
             // asks for confirmation because it enables automatic removal of old autobackups.
@@ -2327,6 +2332,65 @@ namespace Savedrake
             }
         }
 
+        // Undo-restore (QoL): the newest "(Pre-Restore)" checkpoint in the backup folder — the automatic snapshot
+        // Savedrake takes of the live save just before each restore. Returns null if there is none, or the folder is
+        // unreadable. Static + folder-parameterised so the headless harness can test it.
+        private static string FindLatestPreRestoreCheckpoint(string backupDir)
+        {
+            try
+            {
+                return Directory.GetFiles(backupDir, "*.zip")
+                    .Where(f => Path.GetFileName(f).StartsWith("(Pre-Restore)", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
+                    .FirstOrDefault();
+            }
+            catch { return null; }
+        }
+
+        // Undo-restore (QoL): roll the live save back to the snapshot taken just before the last restore. Instead of
+        // duplicating the (high-stakes) restore flow, this selects that checkpoint in the list and invokes the normal
+        // restore, so it inherits the game-running guard, the Steam Cloud warning, validation, AND a fresh pre-restore
+        // snapshot of the CURRENT state (so the undo is itself undoable / redoable).
+        private void UndoLastRestore()
+        {
+            if (string.IsNullOrWhiteSpace(textbox2.Text) || !Directory.Exists(textbox2.Text))
+            {
+                MessageBox.Show("Please set your backup folder first.", "Undo last restore", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            LoadBackupHistory(); // make sure the list matches what's on disk before we pick from it
+            string checkpoint = FindLatestPreRestoreCheckpoint(textbox2.Text);
+            if (checkpoint == null)
+            {
+                MessageBox.Show("There is no snapshot to undo. Savedrake automatically saves a snapshot of your current " +
+                    "save each time you restore a backup, so an undo only becomes available after a restore.",
+                    "Nothing to undo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string when = Path.GetFileNameWithoutExtension(checkpoint).Replace("(Pre-Restore)", "").Trim();
+            DialogResult r = MessageBox.Show(
+                "This rolls your save back to the snapshot Savedrake took just before your last restore" +
+                (when.Length > 0 ? " (" + when + ")" : "") + ".\n\n" +
+                "Your current save is snapshotted first, so you can redo. You'll be reminded about Steam next.\n\n" +
+                "Undo the last restore?",
+                "Undo last restore", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (r != DialogResult.Yes) return;
+
+            string fileName = Path.GetFileName(checkpoint);
+            ListViewItem target = null;
+            foreach (ListViewItem it in listView.Items)
+                if (string.Equals(it.Text, fileName, StringComparison.OrdinalIgnoreCase)) { target = it; break; }
+            if (target == null)
+            {
+                MessageBox.Show("Could not find the snapshot in the backup list.", "Undo last restore", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            listView.SelectedItems.Clear();
+            target.Selected = true;
+            target.Focused = true;
+            button_res_Click(this, EventArgs.Empty); // reuse the full restore flow (cloud warning, checkpoint, transaction)
+        }
+
         private void button_res_Click(object sender, EventArgs e)
         {
             // Check if the textboxes are not empty and contain valid paths
@@ -2371,6 +2435,7 @@ namespace Savedrake
                 DialogResult cloud = MessageBox.Show(
                     "Before restoring, fully EXIT Steam (or disable Dragon's Dogma 2 Cloud Saves in " +
                     "Steam > Properties). Otherwise Steam may re-upload your OLD save and overwrite this restore." +
+                    "\n\nSavedrake snapshots your current save first, so you can undo this from File > Undo last restore." +
                     "\n\nContinue with the restore?",
                     "Exit Steam Before Restoring", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                 if (cloud != DialogResult.Yes) { Status.Text = "Restore cancelled."; return; }

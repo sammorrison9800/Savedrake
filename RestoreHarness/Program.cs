@@ -94,6 +94,7 @@ namespace RestoreHarness
                 Test_ChangeFingerprint();   // change-aware autobackup (PR1): save fingerprint is stable/changes/fail-closed
                 Test_TieredRetention();   // change-aware autobackup (PR2): tiered-retention selector (buckets/cap/idempotent)
                 Test_PinHelpers();   // change-aware autobackup (PR3): pin filename-token helpers (detect/add/remove/round-trip)
+                Test_UndoRestore();   // QoL: find the latest (Pre-Restore) checkpoint for one-click undo restore
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
@@ -518,6 +519,33 @@ namespace RestoreHarness
             Check("UnpinnedPath strips the token", UNPIN("C:\\b\\foo [PINNED].zip") == "C:\\b\\foo.zip");
             Check("pin keeps the autobackup name prefix", Path.GetFileName(PIN("C:\\b\\autobackup_1.zip")).StartsWith("auto"));
             Check("pin -> unpin round-trips to the original", UNPIN(PIN("C:\\b\\(Auto) save 3.zip")) == "C:\\b\\(Auto) save 3.zip");
+            Console.WriteLine();
+        }
+
+        static void Test_UndoRestore()
+        {
+            // Undo-restore (QoL): FindLatestPreRestoreCheckpoint returns the NEWEST "(Pre-Restore)" backup, ignoring
+            // other backups, and null when there is none or the folder is missing.
+            Console.WriteLine("== Undo last restore: latest pre-restore checkpoint ==");
+            var find = SM("FindLatestPreRestoreCheckpoint");
+            string dir = NewDir("undo");
+            Check("empty folder -> null", (string)find.Invoke(null, new object[] { dir }) == null);
+
+            File.WriteAllText(Path.Combine(dir, "backup_1.zip"), "x");
+            File.WriteAllText(Path.Combine(dir, "(Auto) backup_2.zip"), "x");
+            Check("no pre-restore among other backups -> null", (string)find.Invoke(null, new object[] { dir }) == null);
+
+            string older = Path.Combine(dir, "(Pre-Restore) 240619120000.zip");
+            File.WriteAllText(older, "x");
+            File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddHours(-2));
+            string newer = Path.Combine(dir, "(Pre-Restore) 240620120000.zip");
+            File.WriteAllText(newer, "x");
+            File.SetLastWriteTimeUtc(newer, DateTime.UtcNow.AddMinutes(-1));
+            string found = (string)find.Invoke(null, new object[] { dir });
+            Check("returns the newest (Pre-Restore) checkpoint", found != null && Path.GetFileName(found) == "(Pre-Restore) 240620120000.zip", "found=" + found);
+
+            string missing = Path.Combine(work, "undo_missing_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Check("missing folder -> null (no throw)", (string)find.Invoke(null, new object[] { missing }) == null);
             Console.WriteLine();
         }
 
