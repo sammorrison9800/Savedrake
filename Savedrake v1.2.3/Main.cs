@@ -50,6 +50,11 @@ namespace Savedrake
         // UI-thread-only (set/read only from the marshaled timer tick, BackupOperation, restore, and the checkbox
         // handler). null = no baseline yet, so the next eligible backup always fires.
         private string _lastAutoBackupFingerprint;
+        // Change-aware autobackup, part 2 (clean up old backups): two opt-in toggles under Files > Settings, OFF by
+        // default. _cleanupMenuItem on = after each autobackup, keep recent backups + a spread of older ones and remove
+        // the extra old autobackups. _recycleMenuItem on = send removed ones to the Recycle Bin instead of deleting.
+        private ToolStripMenuItem _cleanupMenuItem;
+        private ToolStripMenuItem _recycleMenuItem;
         #endregion
 
         //Hotkey related
@@ -212,6 +217,30 @@ namespace Savedrake
             };
             helpToolStripMenuItem.DropDownItems.Add(openLogFolderMenuItem);
 
+            // Files > Settings: opt-in "clean up old backups" toggles (change-aware autobackup, part 2). OFF by default,
+            // so existing behavior (autobackup stops at the limit) is unchanged until the user opts in. Turning it on
+            // asks for confirmation because it enables automatic removal of old autobackups.
+            _cleanupMenuItem = new ToolStripMenuItem("Automatically clean up old autobackups");
+            _recycleMenuItem = new ToolStripMenuItem("Send removed backups to the Recycle Bin") { CheckOnClick = true, Enabled = false };
+            _cleanupMenuItem.Click += (s, e) =>
+            {
+                if (!_cleanupMenuItem.Checked)
+                {
+                    DialogResult r = MessageBox.Show(
+                        "Savedrake will keep all your recent autobackups and a spread of older ones, then remove the " +
+                        "extra older autobackups so they don't pile up. Your manual backups and pinned backups are never removed.\n\n" +
+                        "Turn this on?",
+                        "Automatically clean up old autobackups", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (r != DialogResult.Yes) return;
+                    _cleanupMenuItem.Checked = true;
+                }
+                else _cleanupMenuItem.Checked = false;
+                _recycleMenuItem.Enabled = _cleanupMenuItem.Checked;
+                if (!_cleanupMenuItem.Checked) _recycleMenuItem.Checked = false;
+            };
+            ssettingsToolStripMenuItem.DropDownItems.Add(_cleanupMenuItem);
+            ssettingsToolStripMenuItem.DropDownItems.Add(_recycleMenuItem);
+
             //tray
             #region
             // Initialize the NotifyIcon component
@@ -318,7 +347,13 @@ namespace Savedrake
             [XmlElement("BackupFileName2")]
             public bool BackupFileName2 { get; set; }
 
-            
+            [XmlElement("AutoCleanupOldBackups")]
+            public bool AutoCleanupOldBackups { get; set; }
+
+            [XmlElement("RemovedToRecycleBin")]
+            public bool RemovedToRecycleBin { get; set; }
+
+
 
             // Include HotkeySettings property
             [XmlElement("Hotkey")]
@@ -453,6 +488,9 @@ namespace Savedrake
                 Textbox3 = textbox3.Text,
                 BackupFileName1 = randomlyGeneratedToolStripMenuItem.Checked,
                 BackupFileName2 = timeStampedToolStripMenuItem.Checked,
+
+                AutoCleanupOldBackups = _cleanupMenuItem != null && _cleanupMenuItem.Checked,
+                RemovedToRecycleBin = _recycleMenuItem != null && _recycleMenuItem.Checked,
                 
                 // Save the hotkey settings
                 Hotkey = new HotkeySettings
@@ -568,6 +606,16 @@ namespace Savedrake
             checkbox_tray.Checked = settings.CheckboxTray;
             checkbox_hot.Checked = settings.CheckboxHot;
             textbox3.Text = settings.Textbox3 ?? " "; // Use null-coalescing operator for simplicity
+
+            // Change-aware autobackup, part 2: restore the "clean up old backups" toggles. Recycle is only meaningful
+            // (and only enabled) while cleanup is on. Setting .Checked here does not fire the user-confirmation dialog,
+            // which lives in the Click handler, not CheckedChanged.
+            if (_cleanupMenuItem != null)
+            {
+                _cleanupMenuItem.Checked = settings.AutoCleanupOldBackups;
+                _recycleMenuItem.Checked = settings.AutoCleanupOldBackups && settings.RemovedToRecycleBin;
+                _recycleMenuItem.Enabled = _cleanupMenuItem.Checked;
+            }
 
 
 
@@ -1064,8 +1112,8 @@ namespace Savedrake
                     // Parse the integer value from toolStripTextBox1
                     if (int.TryParse(toolStripTextBox2.Text, out int maxBackups))
                     {
-                        // Check if the current number of backups is less than the maximum allowed
-                        if (backupCount < maxBackups)
+                        // Clean-up on -> keep backing up (cleanup enforces the limit); off -> original stop-at-limit.
+                        if ((_cleanupMenuItem != null && _cleanupMenuItem.Checked) || backupCount < maxBackups)
                         {
                             // Change-aware autobackup (PR1): null the baseline at game-start so this first backup of
                             // the session always fires (it is NOT routed through the change-aware gate) and Hook B then
@@ -1181,8 +1229,9 @@ namespace Savedrake
                 // Parse the integer value from toolStripTextBox1
                 if (int.TryParse(toolStripTextBox2.Text, out int maxBackups))
                 {
-                    // Check if the current number of backups is less than the maximum allowed
-                    if (backupCount < maxBackups)
+                    // When "clean up old autobackups" is on, autobackup keeps running (cleanup enforces the limit);
+                    // otherwise the original behavior stops autobackup once the limit is reached.
+                    if ((_cleanupMenuItem != null && _cleanupMenuItem.Checked) || backupCount < maxBackups)
                     {
                         // Change-aware gate (PR1): skip this tick when the save folder is unchanged since the last
                         // backup, so the timer stops writing redundant identical zips that consume the autobackup
@@ -1648,6 +1697,9 @@ namespace Savedrake
                 Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully.";
                 PlaySoundFromResource();
                 Log.Info("Backup created: " + Path.GetFileName(backupFileName) + (isAutoBackup ? " (auto)" : ""));
+                // Change-aware autobackup, part 2: after a successful AUTObackup, if the user opted in, keep recent
+                // backups + a spread of older ones and remove the extra old autobackups.
+                if (isAutoBackup && _cleanupMenuItem != null && _cleanupMenuItem.Checked) CleanUpOldAutobackups();
             }
             catch (Exception ex)
             {
@@ -1888,6 +1940,62 @@ namespace Savedrake
             var del = new List<int>();
             for (int i = 0; i < candidateTicksUtc.Length; i++) if (!keep.Contains(i)) del.Add(i);
             return del.ToArray();
+        }
+
+        // Change-aware autobackup, part 2: after a successful autobackup, keep recent backups and a spread of older
+        // ones and remove the extra OLD autobackups (chosen by SelectAutobackupsToThin). Only autobackups are eligible;
+        // manual backups and the "(Pre-Restore)" checkpoint (different name prefixes) are never removed, and a corrupt
+        // backup is skipped so a possibly-recoverable archive is never auto-deleted. Removed backups go to the Recycle
+        // Bin when the user chose that, otherwise they are deleted. UI-thread only; best-effort (errors are logged,
+        // never thrown onto the timer).
+        private void CleanUpOldAutobackups()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(textbox2.Text) || !Directory.Exists(textbox2.Text)) return;
+
+                // Eligible = autobackups only ("(Auto)"/"auto" prefix). Manual backups (no prefix) and the
+                // "(Pre-Restore)" checkpoint are excluded here, so they are never removed.
+                var files = new List<string>();
+                var ticks = new List<long>();
+                foreach (string file in Directory.GetFiles(textbox2.Text, "*.zip"))
+                {
+                    string name = Path.GetFileName(file);
+                    if (!(name.StartsWith("(Auto)") || name.StartsWith("auto"))) continue;
+                    files.Add(file);
+                    ticks.Add(File.GetLastWriteTimeUtc(file).Ticks);
+                }
+                if (files.Count == 0) return;
+
+                int maxKeep = (int.TryParse(toolStripTextBox2.Text, out int m) && m > 0) ? m : 0;
+                int[] toRemove = SelectAutobackupsToThin(ticks.ToArray(), DateTime.UtcNow.Ticks, maxKeep);
+
+                bool toRecycle = _recycleMenuItem != null && _recycleMenuItem.Checked;
+                int removed = 0;
+                foreach (int i in toRemove)
+                {
+                    try
+                    {
+                        if (ClassifyBackupFully(files[i]) == "Corrupt") continue; // never auto-remove a corrupt backup
+                        if (toRecycle)
+                            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(files[i],
+                                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                        else
+                            File.Delete(files[i]);
+                        removed++;
+                    }
+                    catch (Exception ex) { Log.Warn("Could not remove old autobackup " + Path.GetFileName(files[i]) + ": " + ex.Message); }
+                }
+
+                if (removed > 0)
+                {
+                    LoadBackupHistory(); // refresh the list and recompute the autobackup count from disk
+                    Status.Text = removed == 1 ? "Removed 1 old autobackup." : ("Removed " + removed + " old autobackups.");
+                    Log.Info("Auto-cleanup removed " + removed + " old autobackup(s)" + (toRecycle ? " (to Recycle Bin)" : ""));
+                }
+            }
+            catch (Exception ex) { Log.Warn("Auto-cleanup of old autobackups failed: " + ex.Message); }
         }
 
         // Backup integrity verification, layer 2 (P1): confirm the freshly written archive contains every file the
