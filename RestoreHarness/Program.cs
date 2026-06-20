@@ -266,14 +266,14 @@ namespace RestoreHarness
             // P4: before a restore deletes the current live save, snapshot it into the backup folder under a
             // "(Pre-Restore) " name that LoadBackupHistory does NOT count as an autobackup. UI-free, so testable here.
             Console.WriteLine("== Pre-restore safety checkpoint (P4) ==");
-            var mi = IM("CreatePreRestoreCheckpoint");
+            var mi = CM("RestoreEngine", "CreatePreRestoreCheckpoint");
 
             // 1) live save present -> a single (Pre-Restore) zip is created, valid, and contains the save data
             string live = NewDir("cp_live");
             File.WriteAllBytes(Path.Combine(live, "data000.bin"), B("savedata"));
             File.WriteAllBytes(Path.Combine(live, "system.bin"), B("sys"));
             string backup = NewDir("cp_backup");
-            bool ok = (bool)mi.Invoke(inst, new object[] { live, backup });
+            bool ok = (bool)mi.Invoke(null, new object[] { live, backup });
             string[] zips = Directory.GetFiles(backup, "*.zip");
             Check("checkpoint returns true on success", ok);
             Check("exactly one checkpoint zip created", zips.Length == 1, "found " + zips.Length);
@@ -291,13 +291,13 @@ namespace RestoreHarness
             string live2 = NewDir("cp_live_nosave");
             File.WriteAllBytes(Path.Combine(live2, "readme.txt"), B("nothing"));
             string backup2 = NewDir("cp_backup2");
-            bool ok2 = (bool)mi.Invoke(inst, new object[] { live2, backup2 });
+            bool ok2 = (bool)mi.Invoke(null, new object[] { live2, backup2 });
             Check("no-save-data live -> skipped, returns true, no zip", ok2 && Directory.GetFiles(backup2, "*.zip").Length == 0);
 
             // 3) live == backup folder -> refuse (can't stage into the folder being snapshotted), return true
             string same = NewDir("cp_same");
             File.WriteAllBytes(Path.Combine(same, "data000.bin"), B("savedata"));
-            bool ok3 = (bool)mi.Invoke(inst, new object[] { same, same });
+            bool ok3 = (bool)mi.Invoke(null, new object[] { same, same });
             Check("live==backup -> skipped (no zip), returns true", ok3 && Directory.GetFiles(same, "*.zip").Length == 0);
             Console.WriteLine();
         }
@@ -349,7 +349,7 @@ namespace RestoreHarness
             Console.WriteLine("== Backup integrity: manifest verify (P1 layer 2) ==");
             var build = CM("Manifest", "BuildBackupManifest");
             var verify = CM("Manifest", "VerifyZipAgainstManifest");
-            var extract = IM("ExtractZipToStaging");
+            var extract = CM("RestoreEngine", "ExtractZipToStaging");
 
             string src = NewDir("man_src");
             File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("save-A-contents"));
@@ -378,7 +378,7 @@ namespace RestoreHarness
             Check("no manifest -> rejected", !(bool)verify.Invoke(null, a4) && a4[1] != null, "reason=" + a4[1]);
 
             string stage = NewDir("man_stage");
-            extract.Invoke(inst, new object[] { good, stage });
+            extract.Invoke(null, new object[] { good, stage });
             bool hasSaves = File.Exists(Path.Combine(stage, "data000.bin")) && File.Exists(Path.Combine(stage, "system.bin"));
             bool noManifest = !Directory.Exists(Path.Combine(stage, "_savedrake")) && !File.Exists(Path.Combine(stage, "_savedrake", "manifest.json"));
             Check("restore extracts the save files", hasSaves);
@@ -756,36 +756,36 @@ namespace RestoreHarness
         static void Test_ValidateBackup()
         {
             Console.WriteLine("== ValidateBackup ==");
-            var mi = IM("ValidateBackup");
+            var mi = CM("RestoreEngine", "ValidateBackup");
 
             string good = Path.Combine(work, "good.zip");
             MakeZip(good, z => { z.AddEntry("data000.bin", B("save")); z.AddEntry("system.bin", B("sys")); });
             object[] a1 = { good, null };
-            bool r1 = (bool)mi.Invoke(inst, a1);
+            bool r1 = (bool)mi.Invoke(null, a1);
             Check("good backup -> valid", r1 && a1[1] == null, "reason=" + a1[1]);
 
             string empty = Path.Combine(work, "empty.zip");
             MakeZip(empty, z => { });
             object[] a2 = { empty, null };
-            bool r2 = (bool)mi.Invoke(inst, a2);
+            bool r2 = (bool)mi.Invoke(null, a2);
             Check("empty zip -> invalid + 'no files'", !r2 && ((string)a2[1] ?? "").ToLower().Contains("no files"), "reason=" + a2[1]);
 
             string nosave = Path.Combine(work, "nosave.zip");
             MakeZip(nosave, z => { z.AddEntry("readme.txt", B("hi")); z.AddEntry("notes.md", B("x")); });
             object[] a3 = { nosave, null };
-            bool r3 = (bool)mi.Invoke(inst, a3);
+            bool r3 = (bool)mi.Invoke(null, a3);
             Check("no-save zip -> invalid + mentions save data", !r3 && ((string)a3[1] ?? "").ToLower().Contains("save data"), "reason=" + a3[1]);
 
             string corrupt = Path.Combine(work, "corrupt.zip");
             File.WriteAllBytes(corrupt, B("this is definitely not a zip file at all"));
             object[] a4 = { corrupt, null };
-            bool r4 = (bool)mi.Invoke(inst, a4);
+            bool r4 = (bool)mi.Invoke(null, a4);
             Check("corrupt zip -> invalid (caught)", !r4 && !string.IsNullOrEmpty((string)a4[1]), "reason=" + a4[1]);
 
             string nested = Path.Combine(work, "nested.zip");
             MakeZip(nested, z => { z.AddEntry("win64_save/data000.bin", B("s")); z.AddEntry("win64_save/system.bin", B("s")); });
             object[] a5 = { nested, null };
-            bool r5 = (bool)mi.Invoke(inst, a5);
+            bool r5 = (bool)mi.Invoke(null, a5);
             Check("nested-only zip -> valid (leaf check)", r5, "reason=" + a5[1]);
             Console.WriteLine();
         }
@@ -793,13 +793,13 @@ namespace RestoreHarness
         static void Test_ExtractZipToStaging_and_ZipSlip()
         {
             Console.WriteLine("== ExtractZipToStaging + zip-slip guard ==");
-            var ex = IM("ExtractZipToStaging");
+            var ex = CM("RestoreEngine", "ExtractZipToStaging");
 
             // happy
             string z1 = Path.Combine(work, "ex_good.zip");
             MakeZip(z1, z => { z.AddEntry("data000.bin", B("A")); z.AddEntry("system.bin", B("B")); });
             string stage1 = NewDir("stage_good");
-            ex.Invoke(inst, new object[] { z1, stage1 });
+            ex.Invoke(null, new object[] { z1, stage1 });
             Check("extract happy: data000.bin present", File.Exists(Path.Combine(stage1, "data000.bin")));
             Check("extract happy: system.bin present", File.Exists(Path.Combine(stage1, "system.bin")));
 
@@ -807,7 +807,7 @@ namespace RestoreHarness
             string z2 = Path.Combine(work, "ex_sub.zip");
             MakeZip(z2, z => { z.AddEntry("data000.bin", B("A")); z.AddEntry("sub/extra.bin", B("C")); });
             string stage2 = NewDir("stage_sub");
-            ex.Invoke(inst, new object[] { z2, stage2 });
+            ex.Invoke(null, new object[] { z2, stage2 });
             Check("extract subfolder: sub/extra.bin present", File.Exists(Path.Combine(stage2, "sub", "extra.bin")));
 
             // zip-slip: traversal entry
@@ -832,7 +832,7 @@ namespace RestoreHarness
                 string evilOutside = Path.Combine(parent, "evil.txt");
                 if (File.Exists(evilOutside)) File.Delete(evilOutside);
                 bool threw = false; string msg = null;
-                try { ex.Invoke(inst, new object[] { slip, stage3 }); }
+                try { ex.Invoke(null, new object[] { slip, stage3 }); }
                 catch (Exception e) { var u = Unwrap(e); threw = u is IOException; msg = u.Message; }
                 Check("zip-slip: ExtractZipToStaging throws IOException", threw, msg);
                 Check("zip-slip: message mentions unsafe path", msg != null && msg.ToLower().Contains("unsafe path"), msg);
@@ -850,22 +850,22 @@ namespace RestoreHarness
             Directory.CreateDirectory(inner);
             File.WriteAllBytes(Path.Combine(inner, "data000.bin"), B("A"));
             File.WriteAllBytes(Path.Combine(inner, "system.bin"), B("B"));
-            bool detected = (bool)SM("DetectNestedPrefix").Invoke(null, new object[] { s });
+            bool detected = (bool)CM("RestoreEngine", "DetectNestedPrefix").Invoke(null, new object[] { s });
             Check("DetectNestedPrefix true on sole win64_save dir", detected);
-            SM("FlattenNestedLayout").Invoke(null, new object[] { s });
+            CM("RestoreEngine", "FlattenNestedLayout").Invoke(null, new object[] { s });
             Check("flatten: data000.bin at root", File.Exists(Path.Combine(s, "data000.bin")));
             Check("flatten: win64_save husk removed", !Directory.Exists(inner));
 
             // root layout: data at root -> NOT detected (don't flatten legit backups)
             string s2 = NewDir("root");
             File.WriteAllBytes(Path.Combine(s2, "data000.bin"), B("A"));
-            Check("DetectNestedPrefix false on root layout", !(bool)SM("DetectNestedPrefix").Invoke(null, new object[] { s2 }));
+            Check("DetectNestedPrefix false on root layout", !(bool)CM("RestoreEngine", "DetectNestedPrefix").Invoke(null, new object[] { s2 }));
 
             // win64_save dir + a stray root file -> NOT sole item -> not detected
             string s3 = NewDir("mix");
             Directory.CreateDirectory(Path.Combine(s3, "win64_save"));
             File.WriteAllBytes(Path.Combine(s3, "stray.bin"), B("A"));
-            Check("DetectNestedPrefix false when root has extra file", !(bool)SM("DetectNestedPrefix").Invoke(null, new object[] { s3 }));
+            Check("DetectNestedPrefix false when root has extra file", !(bool)CM("RestoreEngine", "DetectNestedPrefix").Invoke(null, new object[] { s3 }));
 
             // DOUBLY-nested win64_save\win64_save\{data,system} -> must flatten WITHOUT throwing (finding #11 fix)
             string s4 = NewDir("nest2");
@@ -874,7 +874,7 @@ namespace RestoreHarness
             File.WriteAllBytes(Path.Combine(inner2, "data000.bin"), B("A"));
             File.WriteAllBytes(Path.Combine(inner2, "system.bin"), B("B"));
             bool flattenThrew = false; string fmsg = null;
-            try { SM("FlattenNestedLayout").Invoke(null, new object[] { s4 }); }
+            try { CM("RestoreEngine", "FlattenNestedLayout").Invoke(null, new object[] { s4 }); }
             catch (Exception e) { flattenThrew = true; fmsg = Unwrap(e).Message; }
             Check("double-nest flatten does NOT throw", !flattenThrew, fmsg);
             Check("double-nest: data000.bin at root", File.Exists(Path.Combine(s4, "data000.bin")));
@@ -888,20 +888,20 @@ namespace RestoreHarness
             Console.WriteLine("== VerifyStagedDir ==");
             string a = NewDir("vsd_good");
             File.WriteAllBytes(Path.Combine(a, "data000.bin"), B("A"));
-            Check("verify true with data*.bin", (bool)SM("VerifyStagedDir").Invoke(null, new object[] { a }));
+            Check("verify true with data*.bin", (bool)CM("RestoreEngine", "VerifyStagedDir").Invoke(null, new object[] { a }));
 
             string b = NewDir("vsd_nosave");
             File.WriteAllBytes(Path.Combine(b, "readme.txt"), B("A"));
-            Check("verify false with no save files", !(bool)SM("VerifyStagedDir").Invoke(null, new object[] { b }));
+            Check("verify false with no save files", !(bool)CM("RestoreEngine", "VerifyStagedDir").Invoke(null, new object[] { b }));
 
             string c = NewDir("vsd_empty");
-            Check("verify false on empty dir", !(bool)SM("VerifyStagedDir").Invoke(null, new object[] { c }));
+            Check("verify false on empty dir", !(bool)CM("RestoreEngine", "VerifyStagedDir").Invoke(null, new object[] { c }));
 
             string d = NewDir("vsd_deep");
             string deep = Path.Combine(d, "win64_save");
             Directory.CreateDirectory(deep);
             File.WriteAllBytes(Path.Combine(deep, "system.bin"), B("A"));
-            Check("verify true with save in subdir (AllDirectories)", (bool)SM("VerifyStagedDir").Invoke(null, new object[] { d }));
+            Check("verify true with save in subdir (AllDirectories)", (bool)CM("RestoreEngine", "VerifyStagedDir").Invoke(null, new object[] { d }));
             Console.WriteLine();
         }
 
@@ -913,7 +913,7 @@ namespace RestoreHarness
             Directory.CreateDirectory(Path.Combine(src, "sub"));
             File.WriteAllBytes(Path.Combine(src, "sub", "extra.bin"), B("X"));
             string dst = Path.Combine(work, "mv_dst_" + Guid.NewGuid().ToString("N").Substring(0, 8)); // not pre-created
-            SM("MoveDirContents").Invoke(null, new object[] { src, dst });
+            CM("RestoreEngine", "MoveDirContents").Invoke(null, new object[] { src, dst });
             Check("MoveDirContents: file moved", File.Exists(Path.Combine(dst, "data000.bin")));
             Check("MoveDirContents: subdir+file moved", File.Exists(Path.Combine(dst, "sub", "extra.bin")));
             Check("MoveDirContents: source emptied", Directory.GetFileSystemEntries(src).Length == 0);
@@ -923,7 +923,7 @@ namespace RestoreHarness
             File.WriteAllBytes(Path.Combine(ed, "a.bin"), B("A"));
             Directory.CreateDirectory(Path.Combine(ed, "s"));
             File.WriteAllBytes(Path.Combine(ed, "s", "b.bin"), B("B"));
-            SM("EmptyDir").Invoke(null, new object[] { ed });
+            CM("RestoreEngine", "EmptyDir").Invoke(null, new object[] { ed });
             Check("EmptyDir: dir emptied but exists", Directory.Exists(ed) && Directory.GetFileSystemEntries(ed).Length == 0);
             Console.WriteLine();
         }
@@ -940,7 +940,7 @@ namespace RestoreHarness
             string f2 = Path.Combine(sub, "system.bin");
             File.WriteAllBytes(f2, B("B"));
             File.SetAttributes(f2, FileAttributes.ReadOnly);
-            SM("ClearReadOnlyRecursive").Invoke(null, new object[] { r });
+            CM("RestoreEngine", "ClearReadOnlyRecursive").Invoke(null, new object[] { r });
             Check("ReadOnly cleared on root file", (File.GetAttributes(f1) & FileAttributes.ReadOnly) == 0);
             Check("ReadOnly cleared on nested file", (File.GetAttributes(f2) & FileAttributes.ReadOnly) == 0);
             Console.WriteLine();
@@ -952,7 +952,7 @@ namespace RestoreHarness
             string remote = NewDir("remote");
             string live = Path.Combine(remote, "win64_save");
             Directory.CreateDirectory(live);
-            string tmp = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_stage" });
+            string tmp = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_stage" });
             Check("temp dir created", Directory.Exists(tmp));
             Check("temp dir is sibling of live (under remote)", string.Equals(Directory.GetParent(tmp).FullName, remote, StringComparison.OrdinalIgnoreCase), tmp);
             Check("temp dir hidden-ish name '._savedrake_stage_'", Path.GetFileName(tmp).StartsWith("._savedrake_stage_"));
@@ -973,20 +973,20 @@ namespace RestoreHarness
             string backup = Path.Combine(work, "hp_backup.zip");
             MakeZip(backup, z => { z.AddEntry("data000.bin", B("NEW-DATA")); z.AddEntry("system.bin", B("NEW-SYS")); z.AddEntry("sub/extra.bin", B("NEW-EXTRA")); });
 
-            string staging = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_stage" });
-            string rollback = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_rollback" });
+            string staging = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_stage" });
+            string rollback = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_rollback" });
 
-            IM("ExtractZipToStaging").Invoke(inst, new object[] { backup, staging });                 // T1
+            CM("RestoreEngine", "ExtractZipToStaging").Invoke(null, new object[] { backup, staging }); // T1
             // Simulate a backup whose files carry the ReadOnly attribute (the R2 bug source).
             foreach (string f in Directory.GetFiles(staging, "*", SearchOption.AllDirectories))
                 File.SetAttributes(f, File.GetAttributes(f) | FileAttributes.ReadOnly);
-            SM("FlattenNestedLayout").Invoke(null, new object[] { staging });                          // T1b (no-op, flat)
-            bool verified = (bool)SM("VerifyStagedDir").Invoke(null, new object[] { staging });        // T2
-            SM("MoveDirContents").Invoke(null, new object[] { live, rollback });                       // T3
-            SM("MoveDirContents").Invoke(null, new object[] { staging, live });                        // T4
-            SM("ClearReadOnlyRecursive").Invoke(null, new object[] { live });                          // T5
-            SM("TryDeleteDir").Invoke(null, new object[] { staging });                                 // finally
-            SM("TryDeleteDir").Invoke(null, new object[] { rollback });                                // finally (rollbackOk=true)
+            CM("RestoreEngine", "FlattenNestedLayout").Invoke(null, new object[] { staging });                          // T1b (no-op, flat)
+            bool verified = (bool)CM("RestoreEngine", "VerifyStagedDir").Invoke(null, new object[] { staging });        // T2
+            CM("RestoreEngine", "MoveDirContents").Invoke(null, new object[] { live, rollback });                       // T3
+            CM("RestoreEngine", "MoveDirContents").Invoke(null, new object[] { staging, live });                        // T4
+            CM("RestoreEngine", "ClearReadOnlyRecursive").Invoke(null, new object[] { live });                          // T5
+            CM("RestoreEngine", "TryDeleteDir").Invoke(null, new object[] { staging });                                 // finally
+            CM("RestoreEngine", "TryDeleteDir").Invoke(null, new object[] { rollback });                                // finally (rollbackOk=true)
 
             Check("happy: VerifyStagedDir true", verified);
             Check("happy: data000.bin replaced with NEW content", File.Exists(Path.Combine(live, "data000.bin")) && File.ReadAllText(Path.Combine(live, "data000.bin")) == "NEW-DATA");
@@ -1039,7 +1039,7 @@ namespace RestoreHarness
         static void Test_PartialT4_NoDataLoss()
         {
             Console.WriteLine("== PARTIAL-T4 FAILURE -> surviving original files (the reported data-loss scenario) ==");
-            var rb = IM("Rollback");
+            var rb = CM("RestoreEngine", "Rollback");
             int np = rb.GetParameters().Length;
             Console.WriteLine("   (real compiled Rollback arity = " + np + "; fixed build = 3-param (liveDir, rollbackDir, stagingStarted))");
 
@@ -1048,23 +1048,23 @@ namespace RestoreHarness
             string liveA = Path.Combine(remoteA, "win64_save"); Directory.CreateDirectory(liveA);
             File.WriteAllText(Path.Combine(liveA, "data000.bin"), "ORIG0");
             File.WriteAllText(Path.Combine(liveA, "data001.bin"), "ORIG1");
-            string stageA = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { liveA, "savedrake_stage" });
-            string rbackA = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { liveA, "savedrake_rollback" });
+            string stageA = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { liveA, "savedrake_stage" });
+            string rbackA = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { liveA, "savedrake_rollback" });
             File.WriteAllText(Path.Combine(stageA, "data000.bin"), "NEW0");
             File.WriteAllText(Path.Combine(stageA, "data001.bin"), "NEW1");
 
-            SM("MoveDirContents").Invoke(null, new object[] { liveA, rbackA });   // T3: originals -> rollback, live empty
+            CM("RestoreEngine", "MoveDirContents").Invoke(null, new object[] { liveA, rbackA });   // T3: originals -> rollback, live empty
             bool stagingStartedA = true;                                          // set BEFORE T4 (as RestoreTransactional does)
             // Partial T4: the first staged file lands in live, then MoveDirContents "throws" (we stop here).
             File.Move(Path.Combine(stageA, "data000.bin"), Path.Combine(liveA, "data000.bin"));
             // catch -> real compiled Rollback
             object[] argsA = np == 3 ? new object[] { liveA, rbackA, stagingStartedA }
                                      : new object[] { liveA, rbackA, true, false }; // old 4-param shape (would FAIL to recover)
-            bool recoveredA = (bool)rb.Invoke(inst, argsA);
+            bool recoveredA = (bool)rb.Invoke(null, argsA);
             bool rollbackOkA = recoveredA;
             // finally (gated exactly like the fixed RestoreTransactional)
-            SM("TryDeleteDir").Invoke(null, new object[] { stageA });
-            if (rollbackOkA) SM("TryDeleteDir").Invoke(null, new object[] { rbackA });
+            CM("RestoreEngine", "TryDeleteDir").Invoke(null, new object[] { stageA });
+            if (rollbackOkA) CM("RestoreEngine", "TryDeleteDir").Invoke(null, new object[] { rbackA });
 
             int survA = CountSurvivingOriginals(liveA, rbackA, "ORIG0", "ORIG1");
             Console.WriteLine("   Scenario A: Rollback returned " + recoveredA + ", surviving originals = " + survA);
@@ -1078,17 +1078,17 @@ namespace RestoreHarness
             // ----- Scenario B: Rollback itself FAILS -> gated finally must PRESERVE rollbackDir (originals survive there) -----
             string remoteB = NewDir("pt4b_remote");
             string liveB = Path.Combine(remoteB, "win64_save"); Directory.CreateDirectory(liveB);
-            string rbackB = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { liveB, "savedrake_rollback" });
+            string rbackB = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { liveB, "savedrake_rollback" });
             File.WriteAllText(Path.Combine(rbackB, "data000.bin"), "ORIG0");      // the only intact originals live here
             File.WriteAllText(Path.Combine(rbackB, "data001.bin"), "ORIG1");
             File.WriteAllText(Path.Combine(liveB, "data000.bin"), "COLLIDE");     // forces MoveDirContents(rollback->live) to throw
             object[] argsB = np == 3 ? new object[] { liveB, rbackB, false }
                                      : new object[] { liveB, rbackB, true, false };
             bool recoveredB;
-            try { recoveredB = (bool)rb.Invoke(inst, argsB); } catch { recoveredB = true; } // a throw OUT would be a bug
+            try { recoveredB = (bool)rb.Invoke(null, argsB); } catch { recoveredB = true; } // a throw OUT would be a bug
             bool rollbackOkB = recoveredB;
-            SM("TryDeleteDir").Invoke(null, new object[] { /*stagingDir n/a*/ rbackB + "_nonexistent" });
-            if (rollbackOkB) SM("TryDeleteDir").Invoke(null, new object[] { rbackB }); // gated: must NOT delete when recovery failed
+            CM("RestoreEngine", "TryDeleteDir").Invoke(null, new object[] { /*stagingDir n/a*/ rbackB + "_nonexistent" });
+            if (rollbackOkB) CM("RestoreEngine", "TryDeleteDir").Invoke(null, new object[] { rbackB }); // gated: must NOT delete when recovery failed
 
             int survB = CountSurvivingOriginals(liveB, rbackB, "ORIG0", "ORIG1");
             Console.WriteLine("   Scenario B: Rollback returned " + recoveredB + " (false expected), surviving originals = " + survB);
@@ -1112,7 +1112,7 @@ namespace RestoreHarness
             string remote = NewDir("dl_remote");
             string live = Path.Combine(remote, "win64_save");
             Directory.CreateDirectory(live);
-            string rollback = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_rollback" });
+            string rollback = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { live, "savedrake_rollback" });
 
             // originals all set aside into rollback
             File.WriteAllBytes(Path.Combine(rollback, "data000.bin"), B("ORIGINAL-DATA"));
@@ -1120,14 +1120,14 @@ namespace RestoreHarness
             // live holds a partially-moved staged file that COLLIDES by name with an original
             File.WriteAllBytes(Path.Combine(live, "data000.bin"), B("STAGED-NEW"));
 
-            var rb = IM("Rollback");
+            var rb = CM("RestoreEngine", "Rollback");
             int np = rb.GetParameters().Length;
             // movedLiveAside=true; stagedIntoLive=false (the reachable partial-T4 state)
             object[] rbArgs = np == 4
                 ? new object[] { live, rollback, true, false }
                 : new object[] { live, rollback, true }; // fixed signature: (liveDir, rollbackDir, stagingStarted=true)
             bool recovered;
-            try { recovered = (bool)rb.Invoke(inst, rbArgs); }
+            try { recovered = (bool)rb.Invoke(null, rbArgs); }
             catch (Exception e) { recovered = false; Console.WriteLine("   Rollback threw: " + Unwrap(e).Message); }
 
             Console.WriteLine("   Rollback returned: " + recovered + " (param count " + np + ")");
@@ -1165,11 +1165,11 @@ namespace RestoreHarness
             string remote2 = NewDir("dl2_remote");
             string live2 = Path.Combine(remote2, "win64_save");
             Directory.CreateDirectory(live2);
-            string rb2 = (string)SM("CreateSiblingTempDir").Invoke(null, new object[] { live2, "savedrake_rollback" });
+            string rb2 = (string)CM("RestoreEngine", "CreateSiblingTempDir").Invoke(null, new object[] { live2, "savedrake_rollback" });
             File.WriteAllBytes(Path.Combine(rb2, "data000.bin"), B("ORIGINAL"));   // the only intact original
             File.WriteAllBytes(Path.Combine(live2, "data000.bin"), B("COLLIDE"));  // forces File.Move collision
             object[] rb2Args = np == 3 ? new object[] { live2, rb2, false } : new object[] { live2, rb2, true, false };
-            bool rec2; try { rec2 = (bool)rb.Invoke(inst, rb2Args); } catch (Exception e) { Console.WriteLine("   Rollback threw OUT (bad): " + Unwrap(e).Message); rec2 = true; }
+            bool rec2; try { rec2 = (bool)rb.Invoke(null, rb2Args); } catch (Exception e) { Console.WriteLine("   Rollback threw OUT (bad): " + Unwrap(e).Message); rec2 = true; }
             Check("forced-collision: Rollback returns false (caught, not thrown)", !rec2);
             bool origPreserved = File.Exists(Path.Combine(rb2, "data000.bin")) && File.ReadAllText(Path.Combine(rb2, "data000.bin")) == "ORIGINAL";
             Check("forced-collision: original PRESERVED in rollbackDir (finally guard prevents data loss)", origPreserved);
