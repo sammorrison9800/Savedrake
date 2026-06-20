@@ -66,6 +66,10 @@ All notable changes to Savedrake are recorded here. The format is based on
   timestamp; older backups still show the date. Sorting by date is unchanged. (#50)
 - Backup-location heads-up: when you pick a backup folder that is in a cloud-synced folder (OneDrive, Dropbox, etc.)
   or on the same drive as your saves, Savedrake now gives a one-time, non-blocking note about the trade-off. (#50)
+- Dark and light themes: Savedrake now has a Dragon's Dogma 2-flavoured look, a charcoal-and-gold dark theme (the
+  default) and a parchment-and-bronze light theme, switchable from File > Use light/dark theme and remembered between
+  runs. The whole window is themed, including the menus and the backup list (with gold "pinned" and green "protected"
+  tags). A few Windows-managed bits (the title bar, scrollbars) keep the system colour. (#51)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment

@@ -105,6 +105,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ListViewDataComparer.cs" />
+    <Compile Include="Theme.cs" />
     <Compile Include="Main.cs">
       <SubType>Form</SubType>
     </Compile>
