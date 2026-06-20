@@ -541,7 +541,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
-            this.ClientSize = new System.Drawing.Size(334, 661);
+            this.ClientSize = new System.Drawing.Size(850, 760);
             this.Controls.Add(this.listView);
             this.Controls.Add(this.textbox3);
             this.Controls.Add(this.statusStrip1);
@@ -567,7 +567,7 @@
             this.MainMenuStrip = this.menuStrip1;
             this.Margin = new System.Windows.Forms.Padding(4, 3, 4, 3);
             this.MaximizeBox = false;
-            this.MinimumSize = new System.Drawing.Size(320, 660);
+            this.MinimumSize = new System.Drawing.Size(850, 760);
             this.Name = "Main";
             this.SizeGripStyle = System.Windows.Forms.SizeGripStyle.Show;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;

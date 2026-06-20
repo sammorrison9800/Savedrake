@@ -5,8 +5,11 @@ using System.Windows.Forms;
 
 namespace Savedrake
 {
-    // UI theme (neutral charcoal + gold dark, parchment + bronze light). Palette locked via a Claude-design mockup pass.
-    // Gold is a dark-mode colour (glows on dark, muddy on light), so light mode uses its dark sibling BRONZE for accents.
+    // UI theme (warm dark + gold dark, parchment + bronze light). Palette locked via a Claude-design mockup pass
+    // ("B - my refinement: warm dark, readable gold, restrained colour"). The dark shell is a warm espresso brown,
+    // NOT a neutral/cool charcoal -- the structural greys carry a brown undertone (red >= green > blue) so the gold
+    // reads as part of the same family. Gold is a dark-mode colour (glows on dark, muddy on light), so light mode
+    // uses its dark sibling BRONZE for accents.
     internal static class Theme
     {
         internal enum Mode { Dark, Light }
@@ -14,7 +17,7 @@ namespace Savedrake
 
         internal struct Palette
         {
-            public Color Window, TitleBar, Panel, PanelAlt, Input, Border, RowSep, Sel,
+            public Color Window, TitleBar, Panel, PanelAlt, Input, Border, Outline, RowSep, Sel,
                          Text, TextSecondary, TextHint, Accent, AccentText, AccentDim,
                          Success, Danger, Pinned;
         }
@@ -23,9 +26,10 @@ namespace Savedrake
 
         static readonly Palette Dark = new Palette
         {
-            Window = H("#1B1B1D"), TitleBar = H("#202022"), Panel = H("#26262A"), PanelAlt = H("#222225"),
-            Input = H("#1E1E20"), Border = H("#34343A"), RowSep = H("#2E2E33"), Sel = H("#3A3A40"),
-            Text = H("#E7E5E0"), TextSecondary = H("#9B9A94"), TextHint = H("#76756F"),
+            // Warm espresso shell (brown undertone, R >= G > B) so the bar/panels/inputs sit in the same family as gold.
+            Window = H("#1F1811"), TitleBar = H("#241C14"), Panel = H("#2A2118"), PanelAlt = H("#251D15"),
+            Input = H("#1A140C"), Border = H("#3A3025"), Outline = H("#6B5A33"), RowSep = H("#2F261A"), Sel = H("#3E3223"),
+            Text = H("#E9E4D8"), TextSecondary = H("#A39B88"), TextHint = H("#837B69"),
             Accent = H("#C8A24C"), AccentText = H("#211A0E"), AccentDim = H("#D3BE86"),
             Success = H("#8FB36A"), Danger = H("#C77B6F"), Pinned = H("#D8B968")
         };
@@ -33,7 +37,7 @@ namespace Savedrake
         static readonly Palette Light = new Palette
         {
             Window = H("#E9E0CB"), TitleBar = H("#E3D8BD"), Panel = H("#F5EFDF"), PanelAlt = H("#EFE7D2"),
-            Input = H("#FBF8EE"), Border = H("#D9CBA8"), RowSep = H("#E3D9BF"), Sel = H("#DBCBA0"),
+            Input = H("#FBF8EE"), Border = H("#D9CBA8"), Outline = H("#B89B5B"), RowSep = H("#E3D9BF"), Sel = H("#DBCBA0"),
             Text = H("#2E2A1F"), TextSecondary = H("#5C543E"), TextHint = H("#837A5E"),
             Accent = H("#7E5E22"), AccentText = H("#F5EFDF"), AccentDim = H("#6E5320"),
             Success = H("#3E6B33"), Danger = H("#9A3B2E"), Pinned = H("#7E5E22")
@@ -141,7 +145,7 @@ namespace Savedrake
                 {
                     btn.BackColor = btn.Enabled ? P.Panel : P.PanelAlt;
                     btn.ForeColor = P.AccentDim;
-                    btn.FlatAppearance.BorderColor = P.Border;
+                    btn.FlatAppearance.BorderColor = P.Outline; // gold-dim outline = the mockup's secondary buttons
                     btn.FlatAppearance.MouseOverBackColor = P.PanelAlt;
                     btn.FlatAppearance.MouseDownBackColor = P.Sel;
                 }
@@ -158,7 +162,14 @@ namespace Savedrake
             if (chk != null) { chk.BackColor = Color.Transparent; chk.ForeColor = P.Text; return; }
 
             var lbl = c as Label;
-            if (lbl != null) { lbl.BackColor = Color.Transparent; lbl.ForeColor = P.Text; return; }
+            // Header-style labels (those ending in ":", e.g. "Savegame Location:") get the gold/bronze accent so the
+            // theme's personality shows even without the card layout; other labels stay in the normal text colour.
+            if (lbl != null)
+            {
+                lbl.BackColor = Color.Transparent;
+                lbl.ForeColor = (!string.IsNullOrEmpty(lbl.Text) && lbl.Text.TrimEnd().EndsWith(":")) ? P.Accent : P.Text;
+                return;
+            }
 
             var lv = c as ListView;
             if (lv != null)

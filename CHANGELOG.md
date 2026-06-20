@@ -66,10 +66,18 @@ All notable changes to Savedrake are recorded here. The format is based on
   timestamp; older backups still show the date. Sorting by date is unchanged. (#50)
 - Backup-location heads-up: when you pick a backup folder that is in a cloud-synced folder (OneDrive, Dropbox, etc.)
   or on the same drive as your saves, Savedrake now gives a one-time, non-blocking note about the trade-off. (#50)
-- Dark and light themes: Savedrake now has a Dragon's Dogma 2-flavoured look, a charcoal-and-gold dark theme (the
+- Dark and light themes: Savedrake now has a Dragon's Dogma 2-flavoured look, a warm-dark espresso-and-gold theme (the
   default) and a parchment-and-bronze light theme, switchable from File > Use light/dark theme and remembered between
   runs. The whole window is themed, including the menus and the backup list (with gold "pinned" and green "protected"
   tags). (#51)
+- Redesigned main window (warm-dark card layout): the window now has a branded header (the dragon mark, the "Savedrake"
+  wordmark, the version, and a gold rule) and three grouped cards — Folders, Autobackup, and Backups. The autobackup
+  options that used to be tucked away in File > Settings (automatically clean up old backups, send removed to the Recycle
+  Bin, back up the moment the game saves, and the keep-at-most limit) are now shown directly on the window. The backup
+  list is cleaner — backup name, a friendly time, and a status tag (green "protected", gold "pinned") — and the action
+  row is Back up now / Restore / Delete. Open save folder, Open backup folder, Refresh list, and Undo delete moved into
+  the File menu. The whole layout is high-DPI aware. The autobackup interval is now chosen from the preset list (custom
+  free-typed intervals are no longer entered inline). (#53)
 - The window title bar now follows the theme too (charcoal in dark, parchment in light) on Windows 11, so the whole
   window is cohesive. On Windows 10 the title bar matches dark/light mode; only a few Windows-managed bits (e.g.
   scrollbars) keep the system colour. (#52)
