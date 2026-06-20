@@ -35,6 +35,10 @@ All notable changes to Savedrake are recorded here. The format is based on
 - Disk-space preflight: before a backup or restore, Savedrake checks the target drive has room
   (including the staging copy a restore needs) and refuses up front with a clear message instead
   of failing partway through. A backup and a restore can also no longer overlap. (#41)
+- Change-aware autobackup (part 1 of 3): autobackup no longer writes a redundant identical backup when
+  your save has not changed since the last one. Each backup records a content fingerprint of the save, and
+  a timer tick that finds no change is skipped instead of consuming one of your autobackup slots. A
+  just-restored save, and a save folder that is momentarily locked or mid-write, are handled safely. (#44)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment
