@@ -35,7 +35,7 @@ All notable changes to Savedrake are recorded here. The format is based on
 - Disk-space preflight: before a backup or restore, Savedrake checks the target drive has room
   (including the staging copy a restore needs) and refuses up front with a clear message instead
   of failing partway through. A backup and a restore can also no longer overlap. (#41)
-- Change-aware autobackup (part 1 of 3): autobackup no longer writes a redundant identical backup when
+- Change-aware autobackup (part 1 of 4): autobackup no longer writes a redundant identical backup when
   your save has not changed since the last one. Each backup records a content fingerprint of the save, and
   a timer tick that finds no change is skipped instead of consuming one of your autobackup slots. A
   just-restored save, and a save folder that is momentarily locked or mid-write, are handled safely. (#44)
@@ -45,10 +45,15 @@ All notable changes to Savedrake are recorded here. The format is based on
   "keep the newest N" limit loses them. Your manual backups and the pre-restore checkpoint are never removed,
   and a backup that fails its integrity check is never removed. Removed backups are deleted by default, or sent
   to the Recycle Bin if you tick the second option. (#45)
-- Pin a backup (part 3 of 3): right-click any backup and choose "Pin backup" to protect it. A pinned backup is
+- Pin a backup (part 3 of 4): right-click any backup and choose "Pin backup" to protect it. A pinned backup is
   never removed by the automatic cleanup and does not count toward your autobackup limit, so you can keep an
   important restore point (for example, before a boss) for as long as you like. Pinned backups are marked with
   "[PINNED]" in the file name, so you can see them in the folder too; right-click again to unpin. (#46)
+- Back up the moment the game saves (part 4 of 4, optional, off by default): a new Files > Settings option that
+  watches your save folder and takes an autobackup shortly after the game writes a save, instead of waiting for the
+  timer interval. The interval timer keeps running as a fallback, and the watcher pauses while you restore so it never
+  backs up the save you just restored. Combine it with the automatic cleanup above for a tidy, up-to-the-moment
+  history. (#47)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment
