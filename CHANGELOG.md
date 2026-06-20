@@ -78,6 +78,9 @@ All notable changes to Savedrake are recorded here. The format is based on
   row is Back up now / Restore / Delete. Open save folder, Open backup folder, Refresh list, and Undo delete moved into
   the File menu. The whole layout is high-DPI aware. The autobackup interval is now chosen from the preset list (custom
   free-typed intervals are no longer entered inline). (#53)
+- The window is now borderless: the branded header is the top of the window (no separate OS title bar), with themed
+  minimize and close buttons in the top-right corner and rounded corners on Windows 11. The window can still be moved by
+  dragging the header and resized from any edge or corner. (#54)
 - The window title bar now follows the theme too (charcoal in dark, parchment in light) on Windows 11, so the whole
   window is cohesive. On Windows 10 the title bar matches dark/light mode; only a few Windows-managed bits (e.g.
   scrollbars) keep the system colour. (#52)
