@@ -106,8 +106,12 @@
   <ItemGroup>
     <Compile Include="ListViewDataComparer.cs" />
     <Compile Include="Theme.cs" />
+    <Compile Include="Ui.cs" />
     <Compile Include="Main.cs">
       <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Main.Layout.cs">
+      <DependentUpon>Main.cs</DependentUpon>
     </Compile>
     <Compile Include="Main.Designer.cs">
       <DependentUpon>Main.cs</DependentUpon>

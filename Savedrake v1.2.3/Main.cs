@@ -1607,6 +1607,8 @@ namespace Savedrake
         {
             Theme.Current = Theme.Current == Theme.Mode.Dark ? Theme.Mode.Light : Theme.Mode.Dark;
             Theme.Apply(this);
+            // Re-apply the card/button look that Theme.Style can't infer (outlined Restore, red Delete, card-bg labels).
+            if (_variantBBuilt) { ApplyVariantBOverrides(); ApplyListScrollTheme(); Invalidate(true); }
             UpdateThemeMenuText();
             listView.Refresh();
             try { SaveSettings(); } catch { }
@@ -1632,14 +1634,40 @@ namespace Savedrake
         {
             Color back = e.Item.Selected ? Theme.P.Sel : (e.ItemIndex % 2 == 0 ? Theme.P.Panel : Theme.P.PanelAlt);
             using (var b = new SolidBrush(back)) e.Graphics.FillRectangle(b, e.Bounds);
+            // Subtle row separator along the bottom (matches the mockup's clean list).
+            using (var sep = new Pen(Theme.P.RowSep))
+                e.Graphics.DrawLine(sep, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
 
-            Color fore = Theme.P.Text;
-            if (e.ColumnIndex == 2) fore = StatusColor(e.SubItem.Text);
-            else if (e.ColumnIndex == 0 && IsPinnedBackup(e.Item.Text)) fore = Theme.P.Pinned;
+            float s = listView.DeviceDpi / 96f;
+            int pad = (int)(12 * s);
+            bool pinned = IsPinnedBackup(e.Item.Text);
+            Rectangle r = e.Bounds; r.X += pad; r.Width -= pad * 2;
 
-            Rectangle r = e.Bounds; r.X += 6; r.Width -= 6;
-            TextRenderer.DrawText(e.Graphics, e.SubItem.Text, listView.Font, r, fore,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            if (e.ColumnIndex == 0)
+            {
+                // Leading dot (gold for pinned) + the backup name (gold if pinned, cream otherwise).
+                int dot = (int)(6 * s), dy = e.Bounds.Top + (e.Bounds.Height - dot) / 2;
+                using (var db = new SolidBrush(pinned ? Theme.P.Pinned : Theme.P.TextSecondary))
+                    e.Graphics.FillEllipse(db, e.Bounds.X + pad, dy, dot, dot);
+                Rectangle nr = r; nr.X += (int)(16 * s); nr.Width -= (int)(16 * s);
+                TextRenderer.DrawText(e.Graphics, e.SubItem.Text, listView.Font, nr, pinned ? Theme.P.Pinned : Theme.P.Text,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
+            else if (e.ColumnIndex == 1)
+            {
+                // Friendly time, right-aligned and muted.
+                TextRenderer.DrawText(e.Graphics, e.SubItem.Text, listView.Font, r, Theme.P.TextSecondary,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
+            else
+            {
+                // Status tag, right-aligned. Pinned backups read "pinned" (gold); otherwise the integrity status in its
+                // theme colour (green "protected"/"validated", red "corrupt"/"missing").
+                string tag = pinned ? "pinned" : (e.SubItem.Text ?? string.Empty).ToLowerInvariant();
+                Color c = pinned ? Theme.P.Pinned : StatusColor(e.SubItem.Text);
+                TextRenderer.DrawText(e.Graphics, tag, listView.Font, r, c,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
         }
 
         private static Color StatusColor(string s)
@@ -1830,12 +1858,16 @@ namespace Savedrake
         {
             if (listView.Columns.Count >= 3)
             {
-                // File Name | Date & Time | Integrity. Give Integrity a fixed slice and split the rest ~55/45.
-                int integrity = 72;
-                int rest = Math.Max(0, listView.Width - integrity);
-                listView.Columns[0].Width = (int)(rest * 0.55);
-                listView.Columns[1].Width = rest - listView.Columns[0].Width;
-                listView.Columns[2].Width = integrity;
+                // Name (flex) | friendly time (right) | status tag (right). The mockup gives the name the room and keeps
+                // the time + tag as narrow right-aligned columns. Size against ClientSize (excludes any vertical
+                // scrollbar) so the columns never overflow into a horizontal scrollbar.
+                float s = listView.DeviceDpi / 96f;
+                int tag = (int)(110 * s), time = (int)(150 * s);
+                int avail = listView.ClientSize.Width;
+                int name = Math.Max((int)(80 * s), avail - tag - time);
+                listView.Columns[0].Width = name;
+                listView.Columns[1].Width = time;
+                listView.Columns[2].Width = tag;
                 return;
             }
             listView.Columns[0].Width = listView.Width / 2;
@@ -3063,6 +3095,9 @@ namespace Savedrake
 
             // Write the new count back to the file
             File.WriteAllText(countFilePath, backupCount.ToString());
+
+            // Reflect the on-disk backup count in the Folders card's count box (mockup shows it beside the backup path).
+            if (_countBackup != null) _countBackup.Text = listView.Items.Count.ToString();
         }
 
         // Right-click "Validate all backups" action (P1): run the FULL integrity check on every listed backup and mark
@@ -3410,6 +3445,9 @@ namespace Savedrake
 
             // Theme-aware background (enabled = panel, disabled = dimmer panel).
             button_undo.BackColor = button_undo.Enabled ? Theme.P.Panel : Theme.P.PanelAlt;
+
+            // The on-form Undo button is hidden in the variant-B layout; keep its File-menu twin in sync.
+            if (_undoDeleteMenuItem != null) _undoDeleteMenuItem.Enabled = deletedFiles.Count > 0;
         }
 
 
@@ -3928,6 +3966,10 @@ namespace Savedrake
             // Apply the saved UI theme (default dark) before the list populates so it owner-draws themed.
             Theme.Apply(this);
             UpdateThemeMenuText();
+            // Build the warm-dark "variant B" card layout: reparents the controls above into cards, adds the branded
+            // header + surfaced autobackup settings, and restyles the list/buttons. Runs after the theme + settings load
+            // so it moves live, populated controls; it re-applies the theme to the new cards itself.
+            BuildVariantBLayout();
             //randomlyGeneratedToolStripMenuItem.Checked = true;
             LoadBackupHistory();
 
