@@ -568,7 +568,7 @@
             this.MainMenuStrip = this.menuStrip1;
             this.Margin = new System.Windows.Forms.Padding(4, 3, 4, 3);
             this.MaximizeBox = false;
-            this.MinimumSize = new System.Drawing.Size(850, 760);
+            this.MinimumSize = new System.Drawing.Size(850, 600);
             this.Name = "Main";
             this.SizeGripStyle = System.Windows.Forms.SizeGripStyle.Show;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;

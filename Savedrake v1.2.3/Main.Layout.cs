@@ -219,7 +219,24 @@ namespace Savedrake
 
             ApplyListScrollTheme();
             ApplyFramelessCorners();
+            FitToWorkArea();
             listViewColumnResize();
+        }
+
+        // Keep the borderless window inside the monitor work area: shrink it if it is taller/wider than the usable area
+        // (the list, anchored top+bottom, absorbs the difference) and nudge it fully on-screen. Without this, a window
+        // taller than the screen would sit pinned at the top with its bottom edge (status bar + resize grip) hidden
+        // behind the taskbar, and with no title bar it could not be dragged up.
+        private void FitToWorkArea()
+        {
+            Rectangle wa = Screen.FromHandle(this.Handle).WorkingArea;
+            int margin = Sx(8);
+            int w = Math.Min(this.Width, wa.Width - margin * 2);
+            int h = Math.Min(this.Height, wa.Height - margin * 2);
+            if (w != this.Width || h != this.Height) this.Size = new Size(w, h);
+            int x = Math.Min(Math.Max(this.Left, wa.Left + margin), wa.Right - this.Width - margin);
+            int y = Math.Min(Math.Max(this.Top, wa.Top + margin), wa.Bottom - this.Height - margin);
+            this.Location = new Point(x, y);
         }
 
         // Re-skin pass for things the generic Theme can't decide from a control name.
