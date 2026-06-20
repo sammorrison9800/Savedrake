@@ -91,6 +91,7 @@ namespace RestoreHarness
                 Test_PreRestoreCheckpoint();   // P4: snapshot the live save before a restore so it isn't discarded
                 Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
+                Test_ChangeFingerprint();   // change-aware autobackup (PR1): save fingerprint is stable/changes/fail-closed
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
@@ -368,6 +369,72 @@ namespace RestoreHarness
             bool noManifest = !Directory.Exists(Path.Combine(stage, "_savedrake")) && !File.Exists(Path.Combine(stage, "_savedrake", "manifest.json"));
             Check("restore extracts the save files", hasSaves);
             Check("restore skips the _savedrake manifest", noManifest);
+            Console.WriteLine();
+        }
+
+        static void Test_ChangeFingerprint()
+        {
+            // Change-aware autobackup (PR1): ComputeSaveFingerprint is the signal that lets the autobackup timer skip a
+            // tick when nothing changed. It must be STABLE across calls on identical content (immune to the manifest's
+            // volatile createdUtc/tool), CHANGE on any real content change, be enumeration-ORDER independent, and return
+            // null (fail-closed) for a missing / locked / no-save-data folder.
+            Console.WriteLine("== Change-aware autobackup: save fingerprint ==");
+            var fp = SM("ComputeSaveFingerprint");
+            var stable = SM("StableManifestHash");
+            var build = SM("BuildBackupManifest");
+
+            string src = NewDir("fp_src");
+            File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("save-A"));
+            File.WriteAllBytes(Path.Combine(src, "system.bin"), B("sys-A"));
+
+            string f1 = (string)fp.Invoke(null, new object[] { src });
+            string f2 = (string)fp.Invoke(null, new object[] { src });
+            Check("fingerprint is non-null for a real save folder", f1 != null);
+            Check("fingerprint is stable across calls (ignores volatile manifest fields)", f1 == f2, "f1=" + f1 + " f2=" + f2);
+
+            File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("save-B"));
+            string f3 = (string)fp.Invoke(null, new object[] { src });
+            Check("a content change changes the fingerprint", f3 != f1);
+            File.WriteAllBytes(Path.Combine(src, "data000.bin"), B("save-A"));
+            Check("reverting the content restores the fingerprint", (string)fp.Invoke(null, new object[] { src }) == f1);
+
+            File.WriteAllBytes(Path.Combine(src, "data001.bin"), B("save-A2"));
+            Check("adding a save file changes the fingerprint", (string)fp.Invoke(null, new object[] { src }) != f1);
+            File.Delete(Path.Combine(src, "data001.bin"));
+            Check("removing the added file restores the fingerprint", (string)fp.Invoke(null, new object[] { src }) == f1);
+
+            // StableManifestHash must ignore createdUtc/tool: two manifests of identical content hash equal.
+            string m1 = (string)build.Invoke(null, new object[] { src });
+            System.Threading.Thread.Sleep(5);
+            string m2 = (string)build.Invoke(null, new object[] { src });
+            string h1 = (string)stable.Invoke(null, new object[] { m1 });
+            Check("StableManifestHash ignores volatile createdUtc/tool", h1 != null && h1 == (string)stable.Invoke(null, new object[] { m2 }));
+
+            // Enumeration-order independence: same files created in opposite order -> identical fingerprint.
+            string oA = NewDir("fp_orderA");
+            File.WriteAllBytes(Path.Combine(oA, "data000.bin"), B("x")); File.WriteAllBytes(Path.Combine(oA, "system.bin"), B("y"));
+            string oB = NewDir("fp_orderB");
+            File.WriteAllBytes(Path.Combine(oB, "system.bin"), B("y")); File.WriteAllBytes(Path.Combine(oB, "data000.bin"), B("x"));
+            Check("fingerprint is enumeration-order independent", (string)fp.Invoke(null, new object[] { oA }) == (string)fp.Invoke(null, new object[] { oB }));
+
+            // No real save data -> null (so a wrong/empty folder reads as "not comparable" and the tick fails closed).
+            string nosave = NewDir("fp_nosave");
+            File.WriteAllText(Path.Combine(nosave, "notes.txt"), "not a save");
+            Check("folder with no DD2 save data -> null", (string)fp.Invoke(null, new object[] { nosave }) == null);
+
+            // Missing folder -> null, no throw.
+            string missing = Path.Combine(work, "fp_missing_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Check("missing folder -> null (no throw)", (string)fp.Invoke(null, new object[] { missing }) == null);
+
+            // Locked (mid-write) file -> null (fail-closed), then recovers once unlocked.
+            string locked = NewDir("fp_locked");
+            string lf = Path.Combine(locked, "data000.bin");
+            File.WriteAllBytes(lf, B("locked-save"));
+            using (new FileStream(lf, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Check("a locked (mid-write) save file -> null (fail-closed)", (string)fp.Invoke(null, new object[] { locked }) == null);
+            }
+            Check("fingerprint recovers once the file is unlocked", (string)fp.Invoke(null, new object[] { locked }) != null);
             Console.WriteLine();
         }
 

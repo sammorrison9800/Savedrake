@@ -46,6 +46,10 @@ namespace Savedrake
         private bool isAutoBackupEnabled = false; //(Autobackup feature)
         private ManagementEventWatcher _watcher; //(Autobackup feature)
         private bool isGameRunning; //(Autobackup feature)
+        // Change-aware autobackup (PR1): content fingerprint of the save folder at the last successful backup.
+        // UI-thread-only (set/read only from the marshaled timer tick, BackupOperation, restore, and the checkbox
+        // handler). null = no baseline yet, so the next eligible backup always fires.
+        private string _lastAutoBackupFingerprint;
         #endregion
 
         //Hotkey related
@@ -1029,6 +1033,9 @@ namespace Savedrake
                 Button_br_1.BackColor = Color.White;
                 Button_br_2.BackColor= Color.White;
                 Status.Text = $"Autobackup disabled";
+                // Change-aware autobackup (PR1): drop the baseline when autobackup is turned off so a later re-enable
+                // re-baselines cleanly against whatever the save folder is then (Hook C also nulls it at game-start).
+                _lastAutoBackupFingerprint = null;
             }
 
             isAutoBackupEnabled = checkbox_auto.Checked;
@@ -1060,6 +1067,11 @@ namespace Savedrake
                         // Check if the current number of backups is less than the maximum allowed
                         if (backupCount < maxBackups)
                         {
+                            // Change-aware autobackup (PR1): null the baseline at game-start so this first backup of
+                            // the session always fires (it is NOT routed through the change-aware gate) and Hook B then
+                            // establishes the real baseline from the current save. Also covers a save-folder change
+                            // made while autobackup was off (the textboxes are only editable when it is off).
+                            _lastAutoBackupFingerprint = null;
                             BackupOperation(true); // Perform the backup operation
                             // No stale increment: LoadBackupHistory (via BackupOperation) already wrote the accurate
                             // count from the files on disk; a failed backup must not advance the limit.
@@ -1172,11 +1184,29 @@ namespace Savedrake
                     // Check if the current number of backups is less than the maximum allowed
                     if (backupCount < maxBackups)
                     {
-                        BackupOperation(true); // Perform the backup operation
-                        // Do NOT increment a stale local: BackupOperation -> LoadBackupHistory already recomputed
-                        // the count from the actual autobackup files on disk and wrote it to countFilePath. Writing
-                        // backupCount+1 here clobbered that recount AND advanced the limit even when the backup
-                        // FAILED (no file created). The next tick re-reads the accurate value.
+                        // Change-aware gate (PR1): skip this tick when the save folder is unchanged since the last
+                        // backup, so the timer stops writing redundant identical zips that consume the autobackup
+                        // limit. A null fingerprint (folder missing/locked/mid-write/no save data) fails CLOSED: skip
+                        // and retry next tick rather than zip a folder we cannot fully read. A null baseline (first
+                        // eligible tick) never skips. Skipping consumes no count and writes no file; the limit/branch
+                        // logic and the _autoBackupInProgress guard are untouched.
+                        string currentFp = ComputeSaveFingerprint(textbox1.Text);
+                        if (currentFp == null)
+                        {
+                            Status.Text = "Autobackup: save folder not ready, will retry.";
+                        }
+                        else if (_lastAutoBackupFingerprint != null && currentFp == _lastAutoBackupFingerprint)
+                        {
+                            Status.Text = "Autobackup: no save changes since last backup.";
+                        }
+                        else
+                        {
+                            BackupOperation(true); // Perform the backup operation
+                            // Do NOT increment a stale local: BackupOperation -> LoadBackupHistory already recomputed
+                            // the count from the actual autobackup files on disk and wrote it to countFilePath. Writing
+                            // backupCount+1 here clobbered that recount AND advanced the limit even when the backup
+                            // FAILED (no file created). The next tick re-reads the accurate value.
+                        }
                     }
                     else
                     {
@@ -1609,6 +1639,12 @@ namespace Savedrake
 
                 // Update the status
                 LoadBackupHistory();
+                // Change-aware autobackup (PR1): refresh the content baseline from the just-published save so the next
+                // autobackup tick skips it when nothing changed. Set unconditionally (manual OR auto) so a manual
+                // backup also suppresses an immediately-following redundant autobackup. Placed inside the try after the
+                // atomic File.Move publish, so a backup that failed verification (and threw to the catch) never
+                // advances the baseline.
+                _lastAutoBackupFingerprint = ComputeSaveFingerprint(textbox1.Text);
                 Status.Text = isAutoBackup ? $"Autobackup created at {DateTime.Now.ToString("hh:mm:ss tt")}." : "Backup created successfully.";
                 PlaySoundFromResource();
                 Log.Info("Backup created: " + Path.GetFileName(backupFileName) + (isAutoBackup ? " (auto)" : ""));
@@ -1757,6 +1793,45 @@ namespace Savedrake
                 ["createdUtc"] = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
                 ["files"] = files
             }.ToString();
+        }
+
+        // Change-aware autobackup (PR1): a stable content fingerprint of the save folder, so the autobackup timer can
+        // skip a tick when nothing changed instead of writing a redundant identical backup that eats into the user's
+        // limit. Reuses BuildBackupManifest (the same per-file path/length/SHA-256 a backup records), then hashes only
+        // the content fields, so it is immune to the manifest's volatile createdUtc/tool stamps. Returns null (never
+        // throws) when the folder is missing/locked/unreadable or holds no real save data; callers treat null as
+        // "not safely comparable" and SKIP (fail-closed) rather than zip a folder they cannot fully read.
+        private static string ComputeSaveFingerprint(string saveDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(saveDir) || !Directory.Exists(saveDir)) return null;
+                // Only fingerprint a folder that actually holds DD2 save data, mirroring BackupOperation's hasSaveData gate.
+                bool hasSave = Directory.EnumerateFiles(saveDir, "*", SearchOption.AllDirectories)
+                    .Any(p => IsRealSaveEntry(Path.GetFileName(p)));
+                if (!hasSave) return null;
+                // BuildBackupManifest opens each file for read; a file the game is actively writing is exclusively
+                // locked and throws IOException, which we catch below and surface as null (skip this tick).
+                return StableManifestHash(BuildBackupManifest(saveDir));
+            }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (System.IO.IOException) { return null; }
+            catch (Exception) { return null; } // never let it throw onto the UI/timer thread
+        }
+
+        // Pure: derive a content-only hash from a BuildBackupManifest JSON string, ignoring its volatile
+        // createdUtc/tool fields so identical content always yields the same fingerprint. Sort by path (Ordinal) so the
+        // result is independent of enumeration order. Returns null if the JSON carries no files[] array.
+        private static string StableManifestHash(string manifestJson)
+        {
+            JArray files = JObject.Parse(manifestJson)["files"] as JArray;
+            if (files == null) return null;
+            var rows = files
+                .Select(f => ((string)f["path"]) + "|" + (long)f["length"] + "|" + ((string)f["sha256"]))
+                .OrderBy(s => s, StringComparer.Ordinal);
+            string joined = string.Join("\n", rows);
+            using (var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(joined)))
+                return Sha256Hex(ms);
         }
 
         // Backup integrity verification, layer 2 (P1): confirm the freshly written archive contains every file the
@@ -2038,6 +2113,11 @@ namespace Savedrake
                         LoadBackupHistory();
                         SortComboBoxItems();
                         listView.Sort();
+                        // Change-aware autobackup (PR1): the live save now equals the just-restored backup. Set the
+                        // baseline to it so the next autobackup tick sees no change and does NOT redundantly re-back-up
+                        // the restored save (it is already captured by the backup it came from plus the (Pre-Restore)
+                        // checkpoint). The next real in-game save changes the fingerprint and triggers a fresh backup.
+                        _lastAutoBackupFingerprint = ComputeSaveFingerprint(textbox1.Text);
                     }
                 }
                 finally { _operationInProgress = false; }
