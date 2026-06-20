@@ -24,6 +24,12 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
   </ItemGroup>
 
+  <!-- System.Management: the WMI ManagementEventWatcher the autobackup engine uses to learn the moment DD2 starts
+       or stops (it watches Steam's "Running" registry value). Framework assembly on net48, named explicitly. -->
+  <ItemGroup>
+    <Reference Include="System.Management" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Savedrake.Core\Savedrake.Core.csproj" />
   </ItemGroup>

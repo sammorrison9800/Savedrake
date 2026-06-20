@@ -21,28 +21,64 @@ namespace Savedrake.App.ViewModels
         public string FullPath { get; set; }
     }
 
-    // The main workflow view model (Phase 4b). Drives the Folders + Backups cards and routes the Backup / Restore /
-    // Delete actions through the UI-agnostic Core services (BackupService / RestoreService) using the WPF dialog +
-    // status implementations below. MVVM via CommunityToolkit.Mvvm source generators.
-    public partial class MainViewModel : ObservableObject
+    // The main workflow view model. Drives the Folders + Autobackup + Backups cards and routes the Backup / Restore /
+    // Delete actions through the UI-agnostic Core services (BackupService / RestoreService). The autobackup engine
+    // (Phase 5) lives in AutobackupController; this view model is its IAutobackupHost — it supplies the live config
+    // and the effects (take a backup, refresh the list, flip the toggle). MVVM via CommunityToolkit.Mvvm.
+    public partial class MainViewModel : ObservableObject, IAutobackupHost, IDisposable
     {
         private readonly IDialogService _dialog;
         private readonly IStatusSink _status;
+        private readonly AutobackupController _autobackup;
 
-        // The two folders the workflow operates on.
+        private bool _loaded;               // false during initial settings load so property hooks don't react
+        private bool _inEnableChange;       // re-entrancy guard while the enable toggle is being processed/reverted
+        private bool _isOperationInProgress; // a manual backup/restore (or an autobackup) is mid-flight
+
+        // ----- Folders -----
+
         [ObservableProperty]
         private string saveDir;
 
         [ObservableProperty]
         private string backupDir;
 
-        // The backup list shown in the Backups card (newest first), and the current selection.
+        // ----- Autobackup config (bound to the Autobackup card) -----
+
+        // Master enable. ConfigEditable is the inverse, so the folder/interval/limit inputs lock while it is on.
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(ConfigEditable))]
+        private bool autobackupEnabled;
+
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(IntervalValid))]
+        private string intervalText = "30 minutes";
+
+        [ObservableProperty]
+        private string maxBackupsText = "10";
+
+        [ObservableProperty]
+        private bool cleanupEnabled;
+
+        [ObservableProperty]
+        private bool recycleEnabled;
+
+        [ObservableProperty]
+        private bool backupOnSaveEnabled;
+
+        // Preset intervals offered in the editable interval box (the box also accepts free text like "12 minutes").
+        public ObservableCollection<string> IntervalOptions { get; } =
+            new ObservableCollection<string> { "5 minutes", "15 minutes", "30 minutes", "1 hour", "2 hours" };
+
+        public bool ConfigEditable => !AutobackupEnabled;
+
+        // ----- Backups list -----
+
         public ObservableCollection<BackupRow> Backups { get; } = new ObservableCollection<BackupRow>();
 
         [ObservableProperty]
         private BackupRow selectedBackup;
 
-        // Status-bar text (bound) and the count shown beside the Backups folder path.
         [ObservableProperty]
         private string statusText = "Ready.";
 
@@ -53,36 +89,117 @@ namespace Savedrake.App.ViewModels
         {
             _dialog = new WpfDialogService();
             _status = new StatusSink(this);
+            _autobackup = new AutobackupController(this);
 
             LoadSettings();
             RefreshBackups();
+
+            _autobackup.Start();              // begin watching DD2's running state
+            EngageAutobackupIfEnabled();      // re-engage a saved-on autobackup (quietly, before hooks go live)
+            _loaded = true;
         }
 
-        // ----- settings (read-only reuse of the WinForms savedrake_settings.xml, best-effort) -----
+        // ================= IAutobackupHost (live config + effects the controller reads) =================
+
+        public TimeSpan AutobackupInterval =>
+            IntervalParser.TryParse(IntervalText, out TimeSpan ts) ? ts : TimeSpan.Zero;
+
+        public bool IntervalValid =>
+            IntervalParser.TryParse(IntervalText, out TimeSpan ts) && ts >= TimeSpan.FromMinutes(5);
+
+        public int MaxAutobackups => int.TryParse(MaxBackupsText, out int n) ? n : 0;
+
+        public bool MaxAutobackupsValid => int.TryParse(MaxBackupsText, out _);
+
+        public string CountFilePath => Path.Combine(AppDataDir, "count_of_autobackups.txt");
+
+        public bool IsOperationInProgress => _isOperationInProgress;
+
+        public IDialogService Dialog => _dialog;
+
+        public IStatusSink Status => _status;
+
+        // Take one autobackup now. Holds the operation lock for its duration so a manual click or another trigger
+        // can't overlap it (the controller's re-entrancy guard covers the in-thread case; this covers the lock the
+        // manual commands check).
+        public bool PerformAutobackup()
+        {
+            bool prev = _isOperationInProgress;
+            _isOperationInProgress = true;
+            try
+            {
+                BackupResult r = BackupService.Backup(
+                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = true, RandomName = true },
+                    _dialog, _status);
+                return r.Ok;
+            }
+            finally { _isOperationInProgress = prev; }
+        }
+
+        public void OnBackupsChanged() => RefreshBackups();
+
+        // Turn the enable toggle off without re-running the enable logic (the controller has already stopped the
+        // timers when it calls this — limit reached / DD2 missing). Just flip the UI flag and persist.
+        public void ForceDisableAutobackup()
+        {
+            _inEnableChange = true;
+            try { AutobackupEnabled = false; }
+            finally { _inEnableChange = false; }
+            SaveSettings();
+        }
+
+        // ================= settings (shared savedrake_settings.xml, best-effort) =================
 
         private static string AppDataDir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Savedrake");
 
         private static string SettingsFilePath => Path.Combine(AppDataDir, "savedrake_settings.xml");
 
-        // Read SaveDir / BackupDir from the WinForms settings file's <Textbox1> / <Textbox2> if present. Read-only,
-        // dependency-free (a tiny hand-rolled XML read so we don't pull in the WinForms AppSettings type). Never throws.
+        // Read the folders + autobackup settings from the WinForms settings file if present. Read-only, dependency-free
+        // (a small hand-rolled XML read), and never throws — missing/garbled settings just leave defaults in place.
         private void LoadSettings()
         {
             try
             {
                 if (!File.Exists(SettingsFilePath)) return;
                 var doc = System.Xml.Linq.XDocument.Load(SettingsFilePath);
-                string t1 = (string)doc.Root?.Element("Textbox1");
-                string t2 = (string)doc.Root?.Element("Textbox2");
+                var root = doc.Root;
+                if (root == null) return;
+
+                string t1 = (string)root.Element("Textbox1");
+                string t2 = (string)root.Element("Textbox2");
                 if (!string.IsNullOrWhiteSpace(t1)) SaveDir = t1;
                 if (!string.IsNullOrWhiteSpace(t2)) BackupDir = t2;
+
+                string limit = (string)root.Element("AutoBackupLimit");
+                if (!string.IsNullOrWhiteSpace(limit)) MaxBackupsText = limit;
+
+                // Interval: reuse the WinForms ComboboxList + ComboboxSelectedIndex shape if present.
+                var listEl = root.Element("ComboboxList");
+                if (listEl != null)
+                {
+                    var items = listEl.Elements("Item").Select(e => (string)e).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+                    int idx = ParseIntOr(root.Element("ComboboxSelectedIndex"), 0);
+                    if (items.Count > 0 && idx >= 0 && idx < items.Count) IntervalText = items[idx];
+                }
+
+                CleanupEnabled = ParseBool(root.Element("AutoCleanupOldBackups"));
+                RecycleEnabled = CleanupEnabled && ParseBool(root.Element("RemovedToRecycleBin"));
+                BackupOnSaveEnabled = ParseBool(root.Element("BackupOnSaveChange"));
+                AutobackupEnabled = ParseBool(root.Element("CheckboxAuto"));
             }
-            catch { /* best-effort: missing/garbled settings just leave the fields blank */ }
+            catch { /* best-effort: defaults stand */ }
         }
 
-        // Persist the two folders into the same <Textbox1>/<Textbox2> shape the WinForms app reads, preserving any
-        // other elements already present. Best-effort: a write failure must never break the workflow.
+        private static bool ParseBool(System.Xml.Linq.XElement el)
+            => el != null && bool.TryParse(el.Value, out bool b) && b;
+
+        private static int ParseIntOr(System.Xml.Linq.XElement el, int fallback)
+            => (el != null && int.TryParse(el.Value, out int n)) ? n : fallback;
+
+        // Persist the folders + autobackup settings into the same element shape the WinForms app uses, preserving any
+        // other elements already present (window size, theme, hotkey, ...). Best-effort: a write failure never breaks
+        // the workflow.
         private void SaveSettings()
         {
             try
@@ -101,11 +218,34 @@ namespace Savedrake.App.ViewModels
 
                 var root = doc.Root ?? new System.Xml.Linq.XElement("AppSettings");
                 if (doc.Root == null) doc.Add(root);
+
                 SetElement(root, "Textbox1", SaveDir ?? "");
                 SetElement(root, "Textbox2", BackupDir ?? "");
+                SetElement(root, "AutoBackupLimit", MaxBackupsText ?? "");
+                SetElement(root, "CheckboxAuto", AutobackupEnabled.ToString());
+                SetElement(root, "AutoCleanupOldBackups", CleanupEnabled.ToString());
+                SetElement(root, "RemovedToRecycleBin", RecycleEnabled.ToString());
+                SetElement(root, "BackupOnSaveChange", BackupOnSaveEnabled.ToString());
+                SetIntervalElements(root);
+
                 doc.Save(SettingsFilePath);
             }
             catch { /* best-effort persistence */ }
+        }
+
+        // Write the chosen interval back in the WinForms ComboboxList + ComboboxSelectedIndex shape so the two apps
+        // stay file-compatible. The list is the current preset set (with the chosen value ensured present).
+        private void SetIntervalElements(System.Xml.Linq.XElement root)
+        {
+            var items = IntervalOptions.ToList();
+            if (!string.IsNullOrWhiteSpace(IntervalText) && !items.Contains(IntervalText)) items.Insert(0, IntervalText);
+            int idx = Math.Max(0, items.IndexOf(IntervalText ?? ""));
+
+            var listEl = root.Element("ComboboxList");
+            if (listEl == null) { listEl = new System.Xml.Linq.XElement("ComboboxList"); root.Add(listEl); }
+            listEl.RemoveNodes();
+            foreach (string s in items) listEl.Add(new System.Xml.Linq.XElement("Item", s));
+            SetElement(root, "ComboboxSelectedIndex", idx.ToString());
         }
 
         private static void SetElement(System.Xml.Linq.XElement root, string name, string value)
@@ -115,7 +255,126 @@ namespace Savedrake.App.ViewModels
             else el.Value = value;
         }
 
-        // ----- backup list -----
+        // ================= autobackup enable / config hooks =================
+
+        // Re-engage a saved-on autobackup at startup, quietly (no modal prompts): if DD2 is missing or the folders /
+        // interval / limit are not valid, just leave it off.
+        private void EngageAutobackupIfEnabled()
+        {
+            if (!AutobackupEnabled) return;
+            if (_autobackup.NoGame || !ValidateAutobackupDirectories(silent: true))
+            {
+                AutobackupEnabled = false;
+                return;
+            }
+            _autobackup.OnEnableOrConfigChanged();
+        }
+
+        partial void OnAutobackupEnabledChanged(bool value)
+        {
+            if (!_loaded || _inEnableChange) return;
+            _inEnableChange = true;
+            try
+            {
+                if (value)
+                {
+                    if (_autobackup.NoGame)
+                    {
+                        _dialog.Warn("Autobackup Unavailable",
+                            "Dragon's Dogma 2 appears to be missing from your Steam library. Autobackup works with " +
+                            "the Steam version of the game and can't run without it.");
+                        AutobackupEnabled = false;
+                        return;
+                    }
+                    if (!ValidateAutobackupDirectories())
+                    {
+                        AutobackupEnabled = false;
+                        return;
+                    }
+                    _autobackup.OnEnableOrConfigChanged();
+                }
+                else
+                {
+                    _autobackup.OnEnableOrConfigChanged();
+                    _status.Set("Autobackup disabled.");
+                }
+                SaveSettings();
+            }
+            finally { _inEnableChange = false; }
+        }
+
+        partial void OnIntervalTextChanged(string value)
+        {
+            if (!_loaded) return;
+            SaveSettings();
+            _autobackup.ApplyIntervalChange();
+        }
+
+        partial void OnMaxBackupsTextChanged(string value)
+        {
+            if (!_loaded) return;
+            SaveSettings();
+        }
+
+        partial void OnCleanupEnabledChanged(bool value)
+        {
+            if (!_loaded) return;
+            if (!value && RecycleEnabled) RecycleEnabled = false; // recycle only applies when cleanup is on
+            SaveSettings();
+        }
+
+        partial void OnRecycleEnabledChanged(bool value)
+        {
+            if (!_loaded) return;
+            SaveSettings();
+        }
+
+        partial void OnBackupOnSaveEnabledChanged(bool value)
+        {
+            if (!_loaded) return;
+            SaveSettings();
+            _autobackup.OnBackupOnSaveChanged();
+        }
+
+        // Directory + interval + limit validity for enabling autobackup. silent = startup re-engage (no prompts).
+        private bool ValidateAutobackupDirectories(bool silent = false)
+        {
+            if (string.IsNullOrWhiteSpace(SaveDir) || !Directory.Exists(SaveDir))
+            {
+                if (!silent) _dialog.Error("Error", "Please select a valid Savegame location first.");
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(BackupDir))
+            {
+                if (!silent) _dialog.Error("Error", "Please select a Backup location.");
+                return false;
+            }
+            if (SaveDir.Equals(BackupDir, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!silent) _dialog.Error("Error", "The Savegame and Backup locations cannot be the same.");
+                return false;
+            }
+            if (!Directory.Exists(BackupDir))
+            {
+                if (silent) return false;
+                if (!_dialog.Confirm("Create Directory", "The backup location does not exist. Create it?")) return false;
+                try { Directory.CreateDirectory(BackupDir); }
+                catch (Exception ex) { _dialog.Error("Error", "Could not create the backup location: " + ex.Message); return false; }
+            }
+            if (!IntervalValid)
+            {
+                if (!silent) _dialog.Error("Error", "Please choose an autobackup interval of at least 5 minutes.");
+                return false;
+            }
+            if (!MaxAutobackupsValid)
+            {
+                if (!silent) _dialog.Error("Error", "Please enter a valid whole number for the autobackup limit.");
+                return false;
+            }
+            return true;
+        }
+
+        // ================= backup list =================
 
         // Rebuild the Backups list from the *.zip files in BackupDir, newest first, exactly like the WinForms
         // LoadBackupHistory: open each zip, "Protected" if it carries a manifest else "Legacy", friendly creation
@@ -136,7 +395,6 @@ namespace Savedrake.App.ViewModels
             try { zipFiles = Directory.GetFiles(dir, "*.zip"); }
             catch { zipFiles = new string[0]; }
 
-            // Newest first by creation time (same ordering as LoadBackupHistory).
             Array.Sort(zipFiles, (x, y) => File.GetCreationTime(y).CompareTo(File.GetCreationTime(x)));
 
             foreach (string path in zipFiles)
@@ -166,7 +424,7 @@ namespace Savedrake.App.ViewModels
             BackupCount = Backups.Count.ToString();
         }
 
-        // ----- folder pickers -----
+        // ================= folder pickers =================
 
         [RelayCommand]
         private void BrowseSave()
@@ -198,20 +456,22 @@ namespace Savedrake.App.ViewModels
             }
         }
 
-        // ----- workflow actions -----
+        // ================= workflow actions =================
 
         [RelayCommand]
         private void Backup()
         {
-            BackupService.Backup(
-                new BackupRequest
-                {
-                    LiveSaveDir = SaveDir,
-                    BackupDir = BackupDir,
-                    IsAutoBackup = false,
-                    RandomName = true
-                },
-                _dialog, _status);
+            if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
+            _isOperationInProgress = true;
+            try
+            {
+                BackupService.Backup(
+                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = false, RandomName = true },
+                    _dialog, _status);
+            }
+            finally { _isOperationInProgress = false; }
+
+            _autobackup.NotifyExternalBackup(); // advance the change-aware baseline so autobackup doesn't re-capture
             RefreshBackups();
         }
 
@@ -223,30 +483,28 @@ namespace Savedrake.App.ViewModels
                 _dialog.Warn("Restore", "Please select a backup to restore first.");
                 return;
             }
+            if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
-            RestoreService.Restore(
-                new RestoreRequest
-                {
-                    BackupZipPath = SelectedBackup.FullPath,
-                    LiveSaveDir = SaveDir,
-                    BackupDir = BackupDir,
-                    GameRunning = IsGameRunning()
-                },
-                _dialog, _status);
-            RefreshBackups();
-        }
-
-        // Best-effort game-running check: a plain process-name probe. The WinForms CheckGameRunningStatus is more
-        // thorough (it also inspects window state); a process check is sufficient for the restore guard for now.
-        // TODO (Phase 5): replace with the full CheckGameRunningStatus parity check.
-        private static bool IsGameRunning()
-        {
+            _isOperationInProgress = true;
+            _autobackup.SuppressSaveWatcher = true; // the restore writes into the save folder — don't auto-back that up
             try
             {
-                return System.Diagnostics.Process.GetProcessesByName("DD2").Length > 0
-                    || System.Diagnostics.Process.GetProcessesByName("DD2-game").Length > 0;
+                RestoreService.Restore(
+                    new RestoreRequest
+                    {
+                        BackupZipPath = SelectedBackup.FullPath,
+                        LiveSaveDir = SaveDir,
+                        BackupDir = BackupDir,
+                        GameRunning = GameDetect.IsDd2Running()
+                    },
+                    _dialog, _status);
             }
-            catch { return false; }
+            finally
+            {
+                _isOperationInProgress = false;
+                _autobackup.SuppressSaveWatcher = false;
+            }
+            RefreshBackups();
         }
 
         [RelayCommand]
@@ -259,8 +517,7 @@ namespace Savedrake.App.ViewModels
             }
 
             BackupRow row = SelectedBackup;
-            if (!_dialog.Confirm("Delete Backup",
-                    "Delete this backup permanently?\n\n" + row.FileName))
+            if (!_dialog.Confirm("Delete Backup", "Delete this backup permanently?\n\n" + row.FileName))
                 return;
 
             try
@@ -275,18 +532,16 @@ namespace Savedrake.App.ViewModels
             RefreshBackups();
         }
 
-        // ----- WPF service implementations -----
+        public void Dispose() => _autobackup?.Dispose();
+
+        // ================= WPF service implementations =================
 
         // Modal dialogs via System.Windows.MessageBox. Confirm uses YesNo (Yes == affirmative, matching the WinForms
-        // DialogResult.Yes convention the Core services were transcribed against); Info/Warn/Error map to the
-        // matching MessageBox icons.
+        // DialogResult.Yes convention the Core services were transcribed against).
         private sealed class WpfDialogService : IDialogService
         {
             public bool Confirm(string title, string message)
-            {
-                return MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question)
-                       == MessageBoxResult.Yes;
-            }
+                => MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
 
             public void Info(string title, string message)
                 => MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information);
@@ -298,8 +553,7 @@ namespace Savedrake.App.ViewModels
                 => MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
-        // Routes each Core Status.Text write into the bound StatusText property, marshalled to the UI thread (a
-        // backup/restore may set status from a non-UI context in later phases).
+        // Routes each Core Status.Text write into the bound StatusText property, marshalled to the UI thread.
         private sealed class StatusSink : IStatusSink
         {
             private readonly MainViewModel _vm;
