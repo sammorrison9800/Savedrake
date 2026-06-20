@@ -133,6 +133,18 @@ namespace Savedrake
             BackColor = Color.Transparent;
         }
 
+        // Make the header's own surface transparent to hit-testing so clicks on its empty areas fall through to the
+        // parent Form (whose WM_NCHITTEST returns HTCAPTION/resize codes) — that's what makes the borderless window
+        // draggable and top-resizable by the header. The header's child controls (menu, caption buttons) are separate
+        // window handles that are hit first, so they still receive their own clicks.
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_NCHITTEST = 0x0084;
+            const int HTTRANSPARENT = -1;
+            if (m.Msg == WM_NCHITTEST) { m.Result = (IntPtr)HTTRANSPARENT; return; }
+            base.WndProc(ref m);
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             float s = DeviceDpi / 96f;
