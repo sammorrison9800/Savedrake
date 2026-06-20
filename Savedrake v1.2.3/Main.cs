@@ -2000,121 +2000,29 @@ namespace Savedrake
         // Returns fullPath if it is free, otherwise the first "name_N.ext" variant that does not exist.
         private static string MakeUniquePath(string fullPath) => BackupNaming.MakeUniquePath(fullPath); // moved to Savedrake.Core.BackupNaming
 
-        // Disk-space preflight headroom: never plan an operation that would leave the volume essentially full.
-        private const long SafetyMarginBytes = 64L * 1024 * 1024; // 64 MB
+        // Disk-space preflight helpers moved to Savedrake.Core.DiskPreflight during the WPF migration (Phase 0);
+        // thin forwarders keep the existing call sites unchanged.
+        private static long GetDirectorySize(string dir) => DiskPreflight.GetDirectorySize(dir);
 
-        // Total size of all files under a directory (recursive). Best-effort: unreadable files are skipped, not fatal.
-        private static long GetDirectorySize(string dir)
-        {
-            long total = 0;
-            try
-            {
-                foreach (string f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                    try { total += new FileInfo(f).Length; } catch { }
-            }
-            catch { }
-            return total;
-        }
+        private static long GetZipUncompressedSize(string zipPath) => DiskPreflight.GetZipUncompressedSize(zipPath);
 
-        // Sum of the UNCOMPRESSED sizes of a zip's entries (read from the central directory; does not extract). This
-        // is how much space a restore's staging extraction needs on the save volume.
-        private static long GetZipUncompressedSize(string zipPath)
-        {
-            try
-            {
-                using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipPath))
-                    return zip.Entries.Where(e => !e.IsDirectory).Sum(e => e.UncompressedSize);
-            }
-            catch { return 0; }
-        }
-
-        // Disk-space preflight: is there room on targetDir's volume for requiredBytes plus a safety margin? Fails OPEN
-        // (returns true) if free space can't be determined (e.g. a network path), so a space-check error never blocks
-        // an otherwise-legitimate operation.
-        private static bool HasFreeSpaceFor(string targetDir, long requiredBytes, out string reason)
-        {
-            reason = null;
-            try
-            {
-                DriveInfo drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(targetDir)));
-                long needed = requiredBytes + SafetyMarginBytes;
-                if (drive.AvailableFreeSpace < needed)
-                {
-                    reason = "not enough free space on " + drive.Name + " (about " + (needed / (1024 * 1024)) +
-                             " MB needed, " + (drive.AvailableFreeSpace / (1024 * 1024)) + " MB free)";
-                    return false;
-                }
-                return true;
-            }
-            catch (Exception) { return true; } // can't determine -> don't block a legitimate operation
-        }
+        private static bool HasFreeSpaceFor(string targetDir, long requiredBytes, out string reason) => DiskPreflight.HasFreeSpaceFor(targetDir, requiredBytes, out reason);
 
         // Backup integrity verification, layer 1 (P1): prove a freshly written archive is actually restorable before
         // we publish or trust it. DotNetZip's IsZipFile(testExtract:true) opens the zip, reads its directory, and
         // expands EVERY entry while checking CRCs, so truncation, bit-rot, or a half-written/locked source file is
         // caught at creation time instead of only when the user finally needs the backup. Returns false (with a
         // reason) on any failure. Static + file-path-only so the headless harness can test it directly.
-        private static bool VerifyZipRestorable(string zipPath, out string reason)
-        {
-            reason = null;
-            try
-            {
-                // testExtract = true: don't just check the signature, expand every entry and verify its CRC.
-                if (!Ionic.Zip.ZipFile.IsZipFile(zipPath, true))
-                {
-                    reason = "the archive is not a valid, fully readable zip (it may be truncated or corrupt)";
-                    return false;
-                }
-                return true;
-            }
-            catch (Exception ex)
-            {
-                reason = "the archive could not be verified: " + ex.Message;
-                return false;
-            }
-        }
+        private static bool VerifyZipRestorable(string zipPath, out string reason) => Manifest.VerifyZipRestorable(zipPath, out reason);
 
-        // Name of the integrity manifest written inside every new backup zip (P1 layer 2). Lives under a reserved
-        // "_savedrake" folder so the restore can recognise and SKIP it — it must never be extracted into the live save
-        // folder. Legacy backups made before this change simply have no manifest and are treated as unverified.
-        private const string ManifestEntryName = "_savedrake/manifest.json";
+        // Backup-integrity / manifest helpers moved to Savedrake.Core.Manifest during the WPF migration (Phase 0).
+        // ManifestEntryName + IsManifestEntry stay reachable from Main (LoadBackupHistory / backup + restore flow)
+        // via a const alias + thin forwarder so call sites are unchanged.
+        private const string ManifestEntryName = Manifest.ManifestEntryName;
 
-        // True for any zip entry under Savedrake's reserved "_savedrake" metadata folder (the integrity manifest), at
-        // the archive root or under any nesting. Such entries are skipped on restore.
-        private static bool IsManifestEntry(string entryFileName)
-        {
-            string p = "/" + (entryFileName ?? "").Replace('\\', '/');
-            return p.IndexOf("/_savedrake/", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
+        private static bool IsManifestEntry(string entryFileName) => Manifest.IsManifestEntry(entryFileName);
 
-        private static string Sha256Hex(System.IO.Stream content)
-        {
-            using (var sha = System.Security.Cryptography.SHA256.Create())
-                return BitConverter.ToString(sha.ComputeHash(content)).Replace("-", "").ToLowerInvariant();
-        }
-
-        // Build the integrity manifest for a backup: one record per source file (path relative to the save folder,
-        // byte length, SHA-256). Written inside the zip and verified against the zip's actual contents at creation, so
-        // a backup missing a file or with silent bit-rot is detected up front instead of only failing at restore time.
-        private static string BuildBackupManifest(string sourceDir)
-        {
-            string baseDir = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var files = new JArray();
-            foreach (string file in Directory.EnumerateFiles(baseDir, "*", SearchOption.AllDirectories))
-            {
-                string rel = Path.GetFullPath(file).Substring(baseDir.Length + 1).Replace('\\', '/');
-                string sha;
-                using (var fs = File.OpenRead(file)) sha = Sha256Hex(fs);
-                files.Add(new JObject { ["path"] = rel, ["length"] = new FileInfo(file).Length, ["sha256"] = sha });
-            }
-            return new JObject
-            {
-                ["manifestVersion"] = 1,
-                ["tool"] = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString(),
-                ["createdUtc"] = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
-                ["files"] = files
-            }.ToString();
-        }
+        private static string BuildBackupManifest(string sourceDir) => Manifest.BuildBackupManifest(sourceDir);
 
         // Change-aware autobackup (PR1): a stable content fingerprint of the save folder, so the autobackup timer can
         // skip a tick when nothing changed instead of writing a redundant identical backup that eats into the user's
@@ -2122,38 +2030,9 @@ namespace Savedrake
         // the content fields, so it is immune to the manifest's volatile createdUtc/tool stamps. Returns null (never
         // throws) when the folder is missing/locked/unreadable or holds no real save data; callers treat null as
         // "not safely comparable" and SKIP (fail-closed) rather than zip a folder they cannot fully read.
-        private static string ComputeSaveFingerprint(string saveDir)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(saveDir) || !Directory.Exists(saveDir)) return null;
-                // Only fingerprint a folder that actually holds DD2 save data, mirroring BackupOperation's hasSaveData gate.
-                bool hasSave = Directory.EnumerateFiles(saveDir, "*", SearchOption.AllDirectories)
-                    .Any(p => IsRealSaveEntry(Path.GetFileName(p)));
-                if (!hasSave) return null;
-                // BuildBackupManifest opens each file for read; a file the game is actively writing is exclusively
-                // locked and throws IOException, which we catch below and surface as null (skip this tick).
-                return StableManifestHash(BuildBackupManifest(saveDir));
-            }
-            catch (UnauthorizedAccessException) { return null; }
-            catch (System.IO.IOException) { return null; }
-            catch (Exception) { return null; } // never let it throw onto the UI/timer thread
-        }
+        private static string ComputeSaveFingerprint(string saveDir) => Fingerprint.ComputeSaveFingerprint(saveDir); // moved to Savedrake.Core.Fingerprint
 
-        // Pure: derive a content-only hash from a BuildBackupManifest JSON string, ignoring its volatile
-        // createdUtc/tool fields so identical content always yields the same fingerprint. Sort by path (Ordinal) so the
-        // result is independent of enumeration order. Returns null if the JSON carries no files[] array.
-        private static string StableManifestHash(string manifestJson)
-        {
-            JArray files = JObject.Parse(manifestJson)["files"] as JArray;
-            if (files == null) return null;
-            var rows = files
-                .Select(f => ((string)f["path"]) + "|" + (long)f["length"] + "|" + ((string)f["sha256"]))
-                .OrderBy(s => s, StringComparer.Ordinal);
-            string joined = string.Join("\n", rows);
-            using (var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(joined)))
-                return Sha256Hex(ms);
-        }
+        private static string StableManifestHash(string manifestJson) => Manifest.StableManifestHash(manifestJson); // moved to Savedrake.Core.Manifest
 
         // Change-aware autobackup, part 2 (tiered retention): pure selection of which autobackups to THIN (delete),
         // given the UTC tick timestamps of the THINNABLE autobackups only (the caller excludes manual backups, pinned
@@ -2240,75 +2119,13 @@ namespace Savedrake
         // manifest declares, each with the recorded length + SHA-256. Catches a backup missing whole files (e.g. a zip
         // truncated at an entry boundary, which the layer-1 CRC test-extract can miss) and per-file bit-rot. Returns
         // false (with a reason) on any missing/mismatched file or a missing/garbled manifest.
-        private static bool VerifyZipAgainstManifest(string zipPath, out string reason)
-        {
-            reason = null;
-            try
-            {
-                using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipPath))
-                {
-                    Ionic.Zip.ZipEntry manifestEntry = zip.Entries.FirstOrDefault(e =>
-                        string.Equals(e.FileName.Replace('\\', '/'), ManifestEntryName, StringComparison.OrdinalIgnoreCase));
-                    if (manifestEntry == null) { reason = "the backup has no integrity manifest"; return false; }
+        private static bool VerifyZipAgainstManifest(string zipPath, out string reason) => Manifest.VerifyZipAgainstManifest(zipPath, out reason);
 
-                    string json;
-                    using (var ms = new System.IO.MemoryStream()) { manifestEntry.Extract(ms); json = System.Text.Encoding.UTF8.GetString(ms.ToArray()); }
-                    JArray files = JObject.Parse(json)["files"] as JArray;
-                    if (files == null) { reason = "the integrity manifest is unreadable"; return false; }
+        private static bool HasManifest(string zipPath) => Manifest.HasManifest(zipPath);
 
-                    var byPath = zip.Entries.Where(e => !e.IsDirectory && !IsManifestEntry(e.FileName))
-                        .ToDictionary(e => e.FileName.Replace('\\', '/'), e => e, StringComparer.OrdinalIgnoreCase);
+        private static bool RestoreBlockedByManifest(string zipPath, out string reason) => Manifest.RestoreBlockedByManifest(zipPath, out reason);
 
-                    foreach (JToken ft in files)
-                    {
-                        string rel = (string)ft["path"];
-                        if (rel == null || !byPath.TryGetValue(rel, out Ionic.Zip.ZipEntry e))
-                        { reason = "a file recorded in the manifest is missing from the backup: " + rel; return false; }
-                        if (e.UncompressedSize != (long)ft["length"])
-                        { reason = "a file's size does not match the manifest: " + rel; return false; }
-                        string actual;
-                        using (var ms = new System.IO.MemoryStream()) { e.Extract(ms); ms.Position = 0; actual = Sha256Hex(ms); }
-                        if (!string.Equals(actual, (string)ft["sha256"], StringComparison.OrdinalIgnoreCase))
-                        { reason = "a file's contents do not match the manifest (corrupt): " + rel; return false; }
-                    }
-                    return true;
-                }
-            }
-            catch (Exception ex) { reason = "the backup could not be verified against its manifest: " + ex.Message; return false; }
-        }
-
-        // True if the backup zip carries an integrity manifest. Cheap: reads the zip directory only, does not hash.
-        private static bool HasManifest(string zipPath)
-        {
-            try
-            {
-                using (Ionic.Zip.ZipFile zip = Ionic.Zip.ZipFile.Read(zipPath))
-                    return zip.Entries.Any(e => string.Equals(e.FileName.Replace('\\', '/'), ManifestEntryName, StringComparison.OrdinalIgnoreCase));
-            }
-            catch { return false; }
-        }
-
-        // Read-side integrity gate for restore (P1): returns true if the restore should be BLOCKED because the backup
-        // carries a manifest that no longer matches its contents — i.e. the backup has corrupted on disk since it was
-        // created. Legacy backups (no manifest, made before this feature) are never blocked here, so old backups keep
-        // restoring exactly as before. Static + file-path-only so the headless harness can test the decision.
-        private static bool RestoreBlockedByManifest(string zipPath, out string reason)
-        {
-            reason = null;
-            if (!HasManifest(zipPath)) return false;                                        // legacy backup -> not gated
-            if (VerifyZipAgainstManifest(zipPath, out reason)) { reason = null; return false; } // matches -> allowed
-            return true;                                                                    // manifest mismatch -> block
-        }
-
-        // Full integrity classification for the "Validate all backups" action (P1): "Validated" (CRC ok + manifest
-        // matches), "Legacy" (no manifest — predates the feature), or "Corrupt" (CRC fails, or a manifest is present
-        // but does not match). Hashes the archive, so it is on-demand only, never on a list refresh. Static for tests.
-        private static string ClassifyBackupFully(string zipPath)
-        {
-            if (!VerifyZipRestorable(zipPath, out _)) return "Corrupt";
-            if (!HasManifest(zipPath)) return "Legacy";
-            return VerifyZipAgainstManifest(zipPath, out _) ? "Validated" : "Corrupt";
-        }
+        private static string ClassifyBackupFully(string zipPath) => Manifest.ClassifyBackupFully(zipPath);
 
 
         // Helper method to generate a unique backup file name
