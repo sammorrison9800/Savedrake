@@ -1430,7 +1430,7 @@ namespace Savedrake
         }
 
         // ---- Auto-detect the DD2 save folder (QoL) ----
-        private const string Dd2AppId = "2054970";
+        // Dd2AppId moved to Savedrake.Core.SaveScan during the WPF migration (Phase 0).
 
         // The Steam install root from the registry, or a common default. null if not found.
         private static string GetSteamRoot()
@@ -1453,27 +1453,9 @@ namespace Savedrake
             return null;
         }
 
-        // Existing DD2 save folders under a Steam root: <root>\userdata\<id>\2054970\remote\win64_save. Most-recently-used
-        // first. Static + parameterised so the headless harness can test it against a crafted tree.
-        private static List<string> FindDd2SaveFoldersUnder(string steamRoot)
-        {
-            var found = new List<string>();
-            try
-            {
-                string userdata = Path.Combine(steamRoot, "userdata");
-                if (!Directory.Exists(userdata)) return found;
-                foreach (string profile in Directory.GetDirectories(userdata))
-                {
-                    string save = Path.Combine(profile, Dd2AppId, "remote", "win64_save");
-                    if (Directory.Exists(save)) found.Add(save);
-                }
-            }
-            catch { }
-            found.Sort((a, b) => DirLastWriteUtc(b).CompareTo(DirLastWriteUtc(a)));
-            return found;
-        }
-
-        private static DateTime DirLastWriteUtc(string d) { try { return Directory.GetLastWriteTimeUtc(d); } catch { return DateTime.MinValue; } }
+        // Existing DD2 save folders under a Steam root. Moved to Savedrake.Core.SaveScan (with Dd2AppId + DirLastWriteUtc)
+        // during the WPF migration (Phase 0); thin forwarder keeps the existing call sites unchanged.
+        private static List<string> FindDd2SaveFoldersUnder(string steamRoot) => SaveScan.FindDd2SaveFoldersUnder(steamRoot);
 
         private static List<string> FindDd2SaveFolders()
         {
@@ -1517,30 +1499,7 @@ namespace Savedrake
         // QoL: a one-line caution about a chosen backup folder, or null if it's fine. Advisory, not blocking. Flags a
         // backup folder inside the save folder, in a cloud-synced folder (OneDrive/Dropbox/Google Drive — sync churn),
         // or on the same drive as the saves (one disk failure loses both). Pure/static so the harness can test it.
-        private static string BackupLocationWarning(string saveDir, string backupDir)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(saveDir) || string.IsNullOrWhiteSpace(backupDir)) return null;
-                string save = Path.GetFullPath(saveDir).TrimEnd('\\', '/');
-                string backup = Path.GetFullPath(backupDir).TrimEnd('\\', '/');
-
-                if (string.Equals(backup, save, StringComparison.OrdinalIgnoreCase) ||
-                    backup.StartsWith(save + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    return "Your backup folder is inside your save folder. Pick a separate folder so backups don't pile up inside your saves.";
-
-                string lower = "\\" + backup.ToLowerInvariant() + "\\";
-                if (lower.Contains("\\onedrive") || lower.Contains("\\dropbox") || lower.Contains("\\google drive") || lower.Contains("\\googledrive"))
-                    return "Your backup folder is in a cloud-synced folder (OneDrive, Dropbox, etc.). That works, but cloud sync can be slow or conflict during a backup. A plain local folder is more reliable.";
-
-                string sroot = Path.GetPathRoot(save), broot = Path.GetPathRoot(backup);
-                if (!string.IsNullOrEmpty(sroot) && string.Equals(sroot, broot, StringComparison.OrdinalIgnoreCase))
-                    return "Your backups are on the same drive as your saves. If that drive fails you would lose both. A different drive (or an extra copy elsewhere) is safer.";
-
-                return null;
-            }
-            catch { return null; }
-        }
+        private static string BackupLocationWarning(string saveDir, string backupDir) => SaveScan.BackupLocationWarning(saveDir, backupDir); // moved to Savedrake.Core.SaveScan
 
         // ---- UI theme (dark/light) ----
         private void UpdateThemeMenuText()
@@ -2039,17 +1998,7 @@ namespace Savedrake
         }
 
         // Returns fullPath if it is free, otherwise the first "name_N.ext" variant that does not exist.
-        private static string MakeUniquePath(string fullPath)
-        {
-            if (!File.Exists(fullPath)) return fullPath;
-            string dir = Path.GetDirectoryName(fullPath);
-            string name = Path.GetFileNameWithoutExtension(fullPath);
-            string ext = Path.GetExtension(fullPath);
-            int n = 2;
-            string candidate;
-            do { candidate = Path.Combine(dir, $"{name}_{n++}{ext}"); } while (File.Exists(candidate));
-            return candidate;
-        }
+        private static string MakeUniquePath(string fullPath) => BackupNaming.MakeUniquePath(fullPath); // moved to Savedrake.Core.BackupNaming
 
         // Disk-space preflight headroom: never plan an operation that would leave the volume essentially full.
         private const long SafetyMarginBytes = 64L * 1024 * 1024; // 64 MB
@@ -2214,53 +2163,7 @@ namespace Savedrake
         // survive (maxKeep <= 0 means no cap), the OLDEST survivors are thinned too until maxKeep remain. Deterministic,
         // idempotent (re-running at the same 'now' on the survivors thins nothing more), and independent of input order.
         // Returns the indices INTO candidateTicksUtc of the entries to delete.
-        private static int[] SelectAutobackupsToThin(long[] candidateTicksUtc, long nowTicksUtc, int maxKeep)
-        {
-            if (candidateTicksUtc == null || candidateTicksUtc.Length == 0) return new int[0];
-
-            long H = TimeSpan.FromHours(1).Ticks;
-            long D = TimeSpan.FromDays(1).Ticks;
-            long[] tierMaxAge = { 1 * H, 6 * H, 24 * H, 7 * D, long.MaxValue };
-            long[] tierInterval = { 0L, TimeSpan.FromMinutes(30).Ticks, H, D, 7 * D };
-
-            var keep = new HashSet<int>();
-            var bucketBest = new Dictionary<string, int>(); // "tier:bucket" -> index of the newest candidate so far
-
-            for (int i = 0; i < candidateTicksUtc.Length; i++)
-            {
-                long age = nowTicksUtc - candidateTicksUtc[i];
-                if (age < 0) age = 0; // clock skew / future-dated backup -> treat as newest, keep it
-
-                int t = 0;
-                while (t < tierMaxAge.Length && age > tierMaxAge[t]) t++;
-                if (t >= tierMaxAge.Length) t = tierMaxAge.Length - 1;
-
-                if (tierInterval[t] == 0) { keep.Add(i); continue; } // recent tier: keep all
-
-                long tierStart = t == 0 ? 0 : tierMaxAge[t - 1];
-                long bucket = (age - tierStart) / tierInterval[t];
-                string key = t + ":" + bucket;
-                if (!bucketBest.TryGetValue(key, out int cur)) bucketBest[key] = i;
-                else
-                {
-                    long a = candidateTicksUtc[i], b = candidateTicksUtc[cur];
-                    if (a > b || (a == b && i > cur)) bucketBest[key] = i; // keep newest; deterministic tie-break
-                }
-            }
-            foreach (var kv in bucketBest) keep.Add(kv.Value);
-
-            // Hard cap: if more than the user's "max autobackups" still survive, thin the OLDEST survivors until maxKeep remain.
-            if (maxKeep > 0 && keep.Count > maxKeep)
-            {
-                var keptOldestFirst = keep.OrderBy(i => candidateTicksUtc[i]).ThenBy(i => i).ToList();
-                int toRemove = keep.Count - maxKeep;
-                for (int k = 0; k < toRemove; k++) keep.Remove(keptOldestFirst[k]);
-            }
-
-            var del = new List<int>();
-            for (int i = 0; i < candidateTicksUtc.Length; i++) if (!keep.Contains(i)) del.Add(i);
-            return del.ToArray();
-        }
+        private static int[] SelectAutobackupsToThin(long[] candidateTicksUtc, long nowTicksUtc, int maxKeep) => RetentionPolicy.SelectAutobackupsToThin(candidateTicksUtc, nowTicksUtc, maxKeep); // moved to Savedrake.Core.RetentionPolicy
 
         // Change-aware autobackup, part 2: after a successful autobackup, keep recent backups and a spread of older
         // ones and remove the extra OLD autobackups (chosen by SelectAutobackupsToThin). Only autobackups are eligible;
@@ -2323,27 +2226,15 @@ namespace Savedrake
         // counted toward the autobackup limit. Pins are marked by a " [PINNED]" token in the file name (not a sidecar
         // or index) so they survive copy/move, are visible in Explorer and the backup list, and need no extra storage.
         // Renaming a pinned file outside Savedrake to drop the token simply unpins it.
-        internal const string PinTag = "[PINNED]";
+        // PinTag + the three pin helpers moved to Savedrake.Core.Pinning during the WPF migration (Phase 0);
+        // thin forwarders keep the existing call sites unchanged.
+        internal const string PinTag = Pinning.PinTag;
 
-        private static bool IsPinnedBackup(string fileName)
-        {
-            return !string.IsNullOrEmpty(fileName) && fileName.IndexOf(PinTag, StringComparison.OrdinalIgnoreCase) >= 0;
-        }
+        private static bool IsPinnedBackup(string fileName) => Pinning.IsPinnedBackup(fileName);
 
-        // The pinned form of a backup path: insert " [PINNED]" before the extension. Idempotent (already-pinned -> unchanged).
-        private static string PinnedPath(string path)
-        {
-            if (IsPinnedBackup(Path.GetFileName(path))) return path;
-            return Path.Combine(Path.GetDirectoryName(path),
-                Path.GetFileNameWithoutExtension(path) + " " + PinTag + Path.GetExtension(path));
-        }
+        private static string PinnedPath(string path) => Pinning.PinnedPath(path);
 
-        // The unpinned form of a backup path: strip the " [PINNED]" token. Idempotent.
-        private static string UnpinnedPath(string path)
-        {
-            string cleaned = Path.GetFileName(path).Replace(" " + PinTag, "").Replace(PinTag, "");
-            return Path.Combine(Path.GetDirectoryName(path), cleaned);
-        }
+        private static string UnpinnedPath(string path) => Pinning.UnpinnedPath(path);
 
         // Backup integrity verification, layer 2 (P1): confirm the freshly written archive contains every file the
         // manifest declares, each with the recorded length + SHA-256. Catches a backup missing whole files (e.g. a zip
@@ -2513,17 +2404,7 @@ namespace Savedrake
         // Undo-restore (QoL): the newest "(Pre-Restore)" checkpoint in the backup folder — the automatic snapshot
         // Savedrake takes of the live save just before each restore. Returns null if there is none, or the folder is
         // unreadable. Static + folder-parameterised so the headless harness can test it.
-        private static string FindLatestPreRestoreCheckpoint(string backupDir)
-        {
-            try
-            {
-                return Directory.GetFiles(backupDir, "*.zip")
-                    .Where(f => Path.GetFileName(f).StartsWith("(Pre-Restore)", StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
-                    .FirstOrDefault();
-            }
-            catch { return null; }
-        }
+        private static string FindLatestPreRestoreCheckpoint(string backupDir) => SaveScan.FindLatestPreRestoreCheckpoint(backupDir); // moved to Savedrake.Core.SaveScan
 
         // Undo-restore (QoL): roll the live save back to the snapshot taken just before the last restore. Instead of
         // duplicating the (high-stakes) restore flow, this selects that checkpoint in the list and invokes the normal
@@ -2811,13 +2692,7 @@ namespace Savedrake
             catch (Exception ex)              { reason = "The backup file could not be read: " + ex.Message; return false; }
         }
 
-        private static bool IsRealSaveEntry(string entryFileName)
-        {
-            string leaf = Path.GetFileName(entryFileName.Replace('/', Path.DirectorySeparatorChar));
-            return System.Text.RegularExpressions.Regex.IsMatch(
-                       leaf, "^data.*\\.bin$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-                || string.Equals(leaf, "system.bin", StringComparison.OrdinalIgnoreCase);
-        }
+        private static bool IsRealSaveEntry(string entryFileName) => SaveScan.IsRealSaveEntry(entryFileName); // moved to Savedrake.Core.SaveScan
 
         private void ExtractZipToStaging(string filePath, string stagingDir)
         {
