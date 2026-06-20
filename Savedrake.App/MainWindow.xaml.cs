@@ -27,6 +27,7 @@ namespace Savedrake.App
         public MainWindow()
         {
             InitializeComponent();
+            DataContext = new Savedrake.App.ViewModels.MainViewModel();
         }
 
         protected override void OnSourceInitialized(EventArgs e)
