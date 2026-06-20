@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Savedrake
@@ -47,6 +48,60 @@ namespace Savedrake
             form.BackColor = P.Window;
             form.ForeColor = P.Text;
             ApplyControls(form.Controls);
+            ApplyTitleBar(form);
+        }
+
+        // ---- Native title-bar theming via DWM (Win11 = caption+text+border colour; Win10 1809+ = dark mode only) ----
+        [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+        [DllImport("ntdll.dll")] static extern void RtlGetNtVersionNumbers(out uint major, out uint minor, out uint build);
+
+        const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;     // Win10 2004+/Win11
+        const int DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19; // Win10 1809-1909
+        const int DWMWA_BORDER_COLOR = 34;                // Win11 22000+
+        const int DWMWA_CAPTION_COLOR = 35;               // Win11 22000+
+        const int DWMWA_TEXT_COLOR = 36;                  // Win11 22000+
+
+        // COLORREF is 0x00BBGGRR — NOT Color.ToArgb() (which is 0x00RRGGBB and would swap red/blue).
+        static int ColorRef(Color c) { return c.R | (c.G << 8) | (c.B << 16); }
+
+        static uint OsBuild()
+        {
+            try { uint mj, mn, b; RtlGetNtVersionNumbers(out mj, out mn, out b); return b & 0xFFFF; }
+            catch { return 0; }
+        }
+
+        // Make the OS title bar follow the theme. Best-effort: on a build/OS without DWM support it just no-ops to the
+        // native bar (never throws). The caption glyphs (min/max/close) follow immersive dark mode: white on the dark
+        // bar, black on the parchment bar — both readable.
+        internal static void ApplyTitleBar(Form form)
+        {
+            if (form == null || !form.IsHandleCreated) return;
+            IntPtr h = form.Handle;
+            uint build = OsBuild();
+            try
+            {
+                int dark = Current == Mode.Dark ? 1 : 0;
+                if (build >= 19041)
+                {
+                    if (DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, 4) != 0)
+                        DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ref dark, 4);
+                }
+                else if (build >= 17763)
+                {
+                    DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ref dark, 4);
+                }
+
+                if (build >= 22000) // caption/text/border colours: Windows 11 only
+                {
+                    int caption = ColorRef(P.TitleBar);
+                    int text = ColorRef(P.Text);
+                    int border = ColorRef(P.Border);
+                    DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, ref caption, 4);
+                    DwmSetWindowAttribute(h, DWMWA_TEXT_COLOR, ref text, 4);
+                    DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR, ref border, 4);
+                }
+            }
+            catch { /* DWM unavailable -> keep the native title bar, never crash */ }
         }
 
         static void ApplyControls(Control.ControlCollection controls)

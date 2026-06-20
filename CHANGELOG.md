@@ -69,7 +69,10 @@ All notable changes to Savedrake are recorded here. The format is based on
 - Dark and light themes: Savedrake now has a Dragon's Dogma 2-flavoured look, a charcoal-and-gold dark theme (the
   default) and a parchment-and-bronze light theme, switchable from File > Use light/dark theme and remembered between
   runs. The whole window is themed, including the menus and the backup list (with gold "pinned" and green "protected"
-  tags). A few Windows-managed bits (the title bar, scrollbars) keep the system colour. (#51)
+  tags). (#51)
+- The window title bar now follows the theme too (charcoal in dark, parchment in light) on Windows 11, so the whole
+  window is cohesive. On Windows 10 the title bar matches dark/light mode; only a few Windows-managed bits (e.g.
+  scrollbars) keep the system colour. (#52)
 
 ### Fixed
 - The updater builds its download URL with `Uri.EscapeDataString` on the version segment
