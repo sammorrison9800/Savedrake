@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:vm="clr-namespace:Savedrake.App.ViewModels"
         Title="Savedrake"
         Width="850" Height="760"
         MinWidth="700" MinHeight="560"
@@ -18,6 +19,14 @@
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="48" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" />
     </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- Display-only converters for the Backups list rows. -->
+        <vm:PinnedToBrushConverter x:Key="PinDotBrush" OnKey="AccentGoldBrush" OffKey="TextSecondaryBrush" />
+        <vm:PinnedToBrushConverter x:Key="PinNameBrush" OnKey="AccentGoldBrush" OffKey="TextBrush" />
+        <vm:RowToPillTextConverter x:Key="PillText" />
+        <vm:RowToPillBrushConverter x:Key="PillBrush" />
+    </Window.Resources>
 
     <!-- Outer margin so the espresso shell shows around the content. -->
     <Grid Margin="12">
@@ -84,8 +93,43 @@
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel>
                         <TextBlock Text="Folders" Style="{StaticResource SectionTitle}" />
-                        <TextBlock Text="Save folder and backup folder settings appear here."
-                                   Style="{StaticResource CardPlaceholder}" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />    <!-- label -->
+                                <ColumnDefinition Width="*" />     <!-- path box -->
+                                <ColumnDefinition Width="Auto" />  <!-- count -->
+                                <ColumnDefinition Width="Auto" />  <!-- browse -->
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="8" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Save game row -->
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Save game" VerticalAlignment="Center"
+                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding SaveDir}" IsReadOnly="True"
+                                     VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
+                                     Background="{StaticResource InputBrush}" Foreground="{StaticResource TextBrush}"
+                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                            <Button Grid.Row="0" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
+                                    Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}" />
+
+                            <!-- Backups row -->
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Backups" VerticalAlignment="Center"
+                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BackupDir}" IsReadOnly="True"
+                                     VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
+                                     Background="{StaticResource InputBrush}" Foreground="{StaticResource TextBrush}"
+                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="10,0,0,0"
+                                       FontSize="12" Foreground="{StaticResource TextHintBrush}"
+                                       Text="{Binding BackupCount, StringFormat={}{0} backups}" />
+                            <Button Grid.Row="2" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
+                                    Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -93,7 +137,7 @@
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel>
                         <TextBlock Text="Autobackup" Style="{StaticResource SectionTitle}" />
-                        <TextBlock Text="Automatic backup schedule and on/off control appear here."
+                        <TextBlock Text="Autobackup settings — coming in the next update."
                                    Style="{StaticResource CardPlaceholder}" />
                     </StackPanel>
                 </Border>
@@ -101,9 +145,119 @@
                 <!-- Backups -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel>
-                        <TextBlock Text="Backups" Style="{StaticResource SectionTitle}" />
-                        <TextBlock Text="The list of saved backups appears here."
-                                   Style="{StaticResource CardPlaceholder}" />
+                        <!-- Header row: title on the left, actions on the right. -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Backups" Style="{StaticResource SectionTitle}"
+                                       Margin="0" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
+                                        Padding="14,7" Command="{Binding BackupCommand}" />
+                                <Button Content="Restore" Style="{StaticResource OutlineButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}" />
+                                <Button Content="Delete" Style="{StaticResource DangerButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Backup list: dark, header-less, custom row template. -->
+                        <ListView ItemsSource="{Binding Backups}"
+                                  SelectedItem="{Binding SelectedBackup, Mode=TwoWay}"
+                                  Background="{StaticResource CardBrush}"
+                                  BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                  Foreground="{StaticResource TextBrush}"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  MinHeight="180" MaxHeight="320">
+                            <ListView.Resources>
+                                <!-- No column headers: this is a single-template list, not a grid. -->
+                                <Style TargetType="GridViewColumnHeader">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Style>
+                            </ListView.Resources>
+
+                            <!-- Dark, full-width, theme-coloured rows with a custom selection highlight. -->
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource RowSepBrush}" />
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListViewItem">
+                                                <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                                        BorderThickness="{TemplateBinding BorderThickness}">
+                                                    <ContentPresenter VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{StaticResource CardAltBrush}" />
+                                                    </Trigger>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{StaticResource SelectionBrush}" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListView.ItemContainerStyle>
+
+                            <!-- Right-click actions. Delete is wired; the rest are stubs for a later phase. -->
+                            <ListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Rename" IsEnabled="False" />
+                                    <MenuItem Header="Delete"
+                                              Command="{Binding PlacementTarget.DataContext.DeleteCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    <MenuItem Header="Pin" IsEnabled="False" />
+                                    <Separator />
+                                    <MenuItem Header="Validate all" IsEnabled="False" />
+                                </ContextMenu>
+                            </ListView.ContextMenu>
+
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="10,9">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />  <!-- dot -->
+                                            <ColumnDefinition Width="*" />     <!-- file name -->
+                                            <ColumnDefinition Width="Auto" />  <!-- pill -->
+                                            <ColumnDefinition Width="Auto" />  <!-- friendly time -->
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Leading dot: gold if pinned, muted otherwise. -->
+                                        <Ellipse Grid.Column="0" Width="8" Height="8" VerticalAlignment="Center"
+                                                 Margin="0,0,10,0"
+                                                 Fill="{Binding IsPinned, Converter={StaticResource PinDotBrush}}" />
+
+                                        <!-- File name: gold if pinned, normal text otherwise. -->
+                                        <TextBlock Grid.Column="1" Text="{Binding FileName}" VerticalAlignment="Center"
+                                                   FontSize="13" TextTrimming="CharacterEllipsis"
+                                                   Foreground="{Binding IsPinned, Converter={StaticResource PinNameBrush}}" />
+
+                                        <!-- Status / pin pill. -->
+                                        <Border Grid.Column="2" Margin="10,0" Padding="8,2" CornerRadius="9"
+                                                Background="{StaticResource InputBrush}" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Converter={StaticResource PillText}}"
+                                                       FontSize="11"
+                                                       Foreground="{Binding Converter={StaticResource PillBrush}}" />
+                                        </Border>
+
+                                        <!-- Friendly creation time, right-aligned and muted. -->
+                                        <TextBlock Grid.Column="3" Text="{Binding FriendlyTime}" VerticalAlignment="Center"
+                                                   FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                                                   TextAlignment="Right" MinWidth="80" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
                     </StackPanel>
                 </Border>
 
@@ -112,7 +266,7 @@
 
         <!-- ============================ STATUS BAR ============================ -->
         <Border Grid.Row="3" Background="{StaticResource BarBrush}" CornerRadius="0,0,10,10" Padding="14,7">
-            <TextBlock x:Name="StatusText" Text="Ready." FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+            <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
         </Border>
     </Grid>
 </Window>
