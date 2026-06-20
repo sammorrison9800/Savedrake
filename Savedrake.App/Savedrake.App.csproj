@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Savedrake.App: the WPF desktop shell (Phase 3 of the WinForms -> WPF migration).
+    Borderless, themed "warm-dark espresso + gold" window. References Savedrake.Core for the
+    portable logic (logging, scan, restore, etc.). UseWindowsForms is on for the tray icon that
+    comes in a later phase. Targets net48 + C# 7.3 to match the rest of the solution.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>Savedrake.App</AssemblyName>
+    <RootNamespace>Savedrake.App</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Savedrake.Core\Savedrake.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,118 @@
+<Window x:Class="Savedrake.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Savedrake"
+        Width="850" Height="760"
+        MinWidth="700" MinHeight="560"
+        WindowStyle="None"
+        AllowsTransparency="False"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource ShellBrush}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <!-- Borderless window via WindowChrome so native drag / resize / Aero-Snap / shadow are preserved. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="48" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+
+    <!-- Outer margin so the espresso shell shows around the content. -->
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- header -->
+            <RowDefinition Height="Auto" />   <!-- gold rule -->
+            <RowDefinition Height="*" />      <!-- content -->
+            <RowDefinition Height="Auto" />   <!-- status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- ============================ HEADER (draggable caption) ============================ -->
+        <Border Grid.Row="0" Background="{StaticResource BarBrush}" CornerRadius="10,10,0,0" Padding="14,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />   <!-- brand token -->
+                    <ColumnDefinition Width="Auto" />   <!-- wordmark + version -->
+                    <ColumnDefinition Width="*" />      <!-- drag spacer -->
+                    <ColumnDefinition Width="Auto" />   <!-- right controls -->
+                </Grid.ColumnDefinitions>
+
+                <!-- 40px circular brand token: card-filled ellipse, thin gold-alpha stroke, gold serif 'S'. -->
+                <Grid Grid.Column="0" Width="40" Height="40" VerticalAlignment="Center">
+                    <Ellipse Fill="{StaticResource CardBrush}" Stroke="{StaticResource GoldRuleBrush}" StrokeThickness="1" />
+                    <TextBlock Text="S" FontFamily="Georgia, Times New Roman" FontSize="22" FontWeight="SemiBold"
+                               Foreground="{StaticResource WordmarkBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+
+                <!-- Wordmark in serif gold + small version. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                    <TextBlock Text="Savedrake" FontFamily="Georgia, Times New Roman" FontSize="26"
+                               Foreground="{StaticResource WordmarkBrush}" VerticalAlignment="Center">
+                        <TextBlock.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+                            </Style>
+                        </TextBlock.Resources>
+                    </TextBlock>
+                    <TextBlock Text="1.4.0" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                               VerticalAlignment="Bottom" Margin="8,0,0,5" />
+                </StackPanel>
+
+                <!-- Right-side controls: clickable (opt out of caption drag). -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button Content="File" Style="{StaticResource HeaderMenuButton}" />
+                    <Button Content="Help" Style="{StaticResource HeaderMenuButton}" Margin="2,0,8,0" />
+                    <Button x:Name="MinimizeButton" Content="&#x2014;" Style="{StaticResource CaptionButton}"
+                            ToolTip="Minimize" Click="MinimizeButton_Click" />
+                    <Button x:Name="CloseButton" Content="&#x2715;" Style="{StaticResource CaptionCloseButton}"
+                            ToolTip="Close" Click="CloseButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 1px gold hairline under the header. -->
+        <Border Grid.Row="1" Height="1" Background="{StaticResource GoldRuleBrush}" />
+
+        <!-- ============================ CONTENT: three cards ============================ -->
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="0,12,0,0">
+            <StackPanel>
+
+                <!-- Folders -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel>
+                        <TextBlock Text="Folders" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Save folder and backup folder settings appear here."
+                                   Style="{StaticResource CardPlaceholder}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Autobackup -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel>
+                        <TextBlock Text="Autobackup" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Automatic backup schedule and on/off control appear here."
+                                   Style="{StaticResource CardPlaceholder}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Backups -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel>
+                        <TextBlock Text="Backups" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="The list of saved backups appears here."
+                                   Style="{StaticResource CardPlaceholder}" />
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ============================ STATUS BAR ============================ -->
+        <Border Grid.Row="3" Background="{StaticResource BarBrush}" CornerRadius="0,0,10,10" Padding="14,7">
+            <TextBlock x:Name="StatusText" Text="Ready." FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+        </Border>
+    </Grid>
+</Window>
