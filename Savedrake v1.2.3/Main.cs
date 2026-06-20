@@ -1538,6 +1538,49 @@ namespace Savedrake
             }
         }
 
+        // QoL: a human-friendly relative time for the backup list ("just now", "5 min ago", "2 hours ago", "yesterday",
+        // "3 days ago", else an absolute date). DISPLAY ONLY — the list still sorts by the FileInfo in each row's Tag
+        // (ListViewItemDateComparer), so changing this text never affects ordering.
+        private static string FriendlyTime(DateTime when)
+        {
+            TimeSpan ago = DateTime.Now - when;
+            if (ago < TimeSpan.Zero) return when.ToString("MMM d, h:mm tt");
+            if (ago.TotalSeconds < 45) return "just now";
+            if (ago.TotalMinutes < 60) return (int)Math.Round(ago.TotalMinutes) + " min ago";
+            if (ago.TotalHours < 24) { int h = (int)Math.Round(ago.TotalHours); return h + (h == 1 ? " hour ago" : " hours ago"); }
+            if (ago.TotalDays < 2) return "yesterday";
+            if (ago.TotalDays < 8) return (int)ago.TotalDays + " days ago";
+            return when.ToString("MMM d, h:mm tt");
+        }
+
+        // QoL: a one-line caution about a chosen backup folder, or null if it's fine. Advisory, not blocking. Flags a
+        // backup folder inside the save folder, in a cloud-synced folder (OneDrive/Dropbox/Google Drive — sync churn),
+        // or on the same drive as the saves (one disk failure loses both). Pure/static so the harness can test it.
+        private static string BackupLocationWarning(string saveDir, string backupDir)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(saveDir) || string.IsNullOrWhiteSpace(backupDir)) return null;
+                string save = Path.GetFullPath(saveDir).TrimEnd('\\', '/');
+                string backup = Path.GetFullPath(backupDir).TrimEnd('\\', '/');
+
+                if (string.Equals(backup, save, StringComparison.OrdinalIgnoreCase) ||
+                    backup.StartsWith(save + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    return "Your backup folder is inside your save folder. Pick a separate folder so backups don't pile up inside your saves.";
+
+                string lower = "\\" + backup.ToLowerInvariant() + "\\";
+                if (lower.Contains("\\onedrive") || lower.Contains("\\dropbox") || lower.Contains("\\google drive") || lower.Contains("\\googledrive"))
+                    return "Your backup folder is in a cloud-synced folder (OneDrive, Dropbox, etc.). That works, but cloud sync can be slow or conflict during a backup. A plain local folder is more reliable.";
+
+                string sroot = Path.GetPathRoot(save), broot = Path.GetPathRoot(backup);
+                if (!string.IsNullOrEmpty(sroot) && string.Equals(sroot, broot, StringComparison.OrdinalIgnoreCase))
+                    return "Your backups are on the same drive as your saves. If that drive fails you would lose both. A different drive (or an extra copy elsewhere) is safer.";
+
+                return null;
+            }
+            catch { return null; }
+        }
+
         private void PromptForFolderSelection()
         {
             using (var dialog = new CommonOpenFileDialog())
@@ -1642,6 +1685,10 @@ namespace Savedrake
                     else
                     {
                         textbox2.Text = selectedPath; // Set the selected folder path to textbox2
+                        // QoL: advise (don't block) if the chosen folder is cloud-synced or on the same drive as saves.
+                        string locWarn = BackupLocationWarning(textbox1.Text, selectedPath);
+                        if (locWarn != null)
+                            MessageBox.Show(locWarn, "Backup location", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
             }
@@ -2913,7 +2960,7 @@ namespace Savedrake
                         // "Validated"/"Corrupt" runs only on demand via the "Validate all backups" right-click action,
                         // because hashing every backup on every refresh would be slow.
                         bool hasManifest = zip.Entries.Any(en => IsManifestEntry(en.FileName));
-                        ListViewItem item = new ListViewItem(new[] { fileInfo.Name, fileInfo.CreationTime.ToString(),
+                        ListViewItem item = new ListViewItem(new[] { fileInfo.Name, FriendlyTime(fileInfo.CreationTime),
                             hasManifest ? "Protected" : "Legacy" });
                         item.UseItemStyleForSubItems = false;
                         item.SubItems[2].ForeColor = hasManifest ? System.Drawing.Color.SteelBlue : System.Drawing.Color.Gray;

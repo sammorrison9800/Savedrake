@@ -96,6 +96,8 @@ namespace RestoreHarness
                 Test_PinHelpers();   // change-aware autobackup (PR3): pin filename-token helpers (detect/add/remove/round-trip)
                 Test_UndoRestore();   // QoL: find the latest (Pre-Restore) checkpoint for one-click undo restore
                 Test_DetectSaveFolder();   // QoL: enumerate DD2 save folders under a Steam root (auto-detect)
+                Test_FriendlyTime();   // QoL: friendly relative time in the backup list
+                Test_BackupLocationWarning();   // QoL: cloud-synced / same-drive backup-location warning
                 Test_RestoreReverify();   // P1: restore re-verifies a manifest-bearing backup; legacy backups unaffected
                 Test_ClassifyBackup();   // P1 UI: full Validated/Legacy/Corrupt classification for "Validate all"
                 Test_LogRedaction();   // P2: the rolling logger redacts the Steam account id and user profile path
@@ -574,6 +576,39 @@ namespace RestoreHarness
             Check("finds both DD2 Steam profiles", F(root).Count == 2);
 
             Check("missing steam root -> empty (no throw)", F(Path.Combine(work, "no_steam_" + Guid.NewGuid().ToString("N").Substring(0, 6))).Count == 0);
+            Console.WriteLine();
+        }
+
+        static void Test_FriendlyTime()
+        {
+            // QoL: FriendlyTime renders a backup's age as a human phrase, falling back to an absolute date for old ones.
+            Console.WriteLine("== QoL: friendly relative time ==");
+            var ft = SM("FriendlyTime");
+            System.Func<DateTime, string> F = d => (string)ft.Invoke(null, new object[] { d });
+            Check("recent -> 'just now'", F(DateTime.Now.AddSeconds(-5)) == "just now");
+            Check("minutes -> 'N min ago'", F(DateTime.Now.AddMinutes(-5)).EndsWith("min ago"));
+            Check("hours -> 'N hours ago'", F(DateTime.Now.AddHours(-3)) == "3 hours ago");
+            Check("one hour -> singular", F(DateTime.Now.AddMinutes(-61)) == "1 hour ago");
+            Check("a day -> 'yesterday'", F(DateTime.Now.AddHours(-25)) == "yesterday");
+            Check("several days -> 'N days ago'", F(DateTime.Now.AddDays(-3)) == "3 days ago");
+            Check("old -> absolute date (no 'ago')", !F(DateTime.Now.AddDays(-30)).Contains("ago"));
+            Console.WriteLine();
+        }
+
+        static void Test_BackupLocationWarning()
+        {
+            // QoL: BackupLocationWarning advises (returns a string) for risky backup folders, null when fine.
+            Console.WriteLine("== QoL: backup-location warning ==");
+            var w = SM("BackupLocationWarning");
+            System.Func<string, string, string> W = (s, b) => (string)w.Invoke(null, new object[] { s, b });
+            Check("different local drive -> no warning", W(@"C:\Saves", @"D:\Backups") == null);
+            Check("backup inside save -> warned", W(@"C:\Saves", @"C:\Saves\backups") != null);
+            Check("backup == save -> warned", W(@"C:\Saves", @"C:\Saves") != null);
+            string cloud = W(@"C:\Saves", @"C:\Users\x\OneDrive\Backups");
+            Check("OneDrive folder -> cloud warning", cloud != null && cloud.ToLower().Contains("cloud"));
+            string sameDrive = W(@"C:\Saves", @"C:\Other\Backups");
+            Check("same drive -> drive warning", sameDrive != null && sameDrive.ToLower().Contains("drive"));
+            Check("empty inputs -> null", W("", "") == null);
             Console.WriteLine();
         }
 
