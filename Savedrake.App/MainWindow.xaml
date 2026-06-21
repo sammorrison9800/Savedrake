@@ -113,6 +113,8 @@
                     <Button Content="Help" Style="{StaticResource HeaderMenuButton}" Margin="2,0,8,0" Click="HeaderMenu_Click">
                         <Button.ContextMenu>
                             <ContextMenu>
+                                <MenuItem Header="Check for updates" Click="CheckUpdates_Click" />
+                                <Separator />
                                 <MenuItem Header="FAQ"
                                           Command="{Binding PlacementTarget.DataContext.OpenFaqCommand,
                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}" />

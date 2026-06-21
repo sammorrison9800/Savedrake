@@ -140,6 +140,7 @@ namespace RestoreHarness
                 Test_AutobackupCountStore();   // Phase 5: forgiving read of the autobackup count file (missing/garbled -> 0)
                 Test_AutobackupCleanup();   // Phase 5: auto-thinning excludes manual/pre-restore/pinned, removes surplus autos
                 Test_GameDetect();   // Phase 5: DD2 running-state registry read returns a bool and never throws
+                Test_UpdateCheck();   // Phase 6i: update version parsing (strip v, 2-4 numeric parts) + comparison
             }
             catch (Exception ex)
             {
@@ -977,6 +978,30 @@ namespace RestoreHarness
             try { result = GameDetect.IsDd2Running(); } catch { threw = true; }
             Check("IsDd2Running() does not throw on a box without DD2", !threw);
             Check("IsDd2Running() reports not-running when the key is absent", result == false);
+            Console.WriteLine();
+        }
+
+        static void Test_UpdateCheck()
+        {
+            // Phase 6i: TryParseVersion is the pure half of the update check — strip a leading 'v', require 2-4
+            // numeric parts. A higher tag drives UpdateAvailable; an equal/unparsable tag must never claim an update.
+            Console.WriteLine("== Phase 6i: update version parsing ==");
+            Check("plain 1.2.3 parses", UpdateCheck.TryParseVersion("1.2.3", out Version v1) && v1.ToString() == "1.2.3");
+            Check("v-prefixed v1.2.5 parses (v stripped)", UpdateCheck.TryParseVersion("v1.2.5", out Version v2) && v2.ToString() == "1.2.5");
+            Check("uppercase V2.0 parses", UpdateCheck.TryParseVersion("V2.0", out Version _));
+            Check("two-part 1.4 parses", UpdateCheck.TryParseVersion("1.4", out Version _));
+            Check("four-part 1.2.3.4 parses", UpdateCheck.TryParseVersion("1.2.3.4", out Version _));
+            Check("single part 1 -> invalid", !UpdateCheck.TryParseVersion("1", out Version _));
+            Check("five parts -> invalid", !UpdateCheck.TryParseVersion("1.2.3.4.5", out Version _));
+            Check("non-numeric part -> invalid", !UpdateCheck.TryParseVersion("1.x.3", out Version _));
+            Check("empty -> invalid", !UpdateCheck.TryParseVersion("", out Version _));
+            Check("garbage -> invalid", !UpdateCheck.TryParseVersion("vNext", out Version _));
+
+            UpdateCheck.TryParseVersion("1.2.3", out Version cur);
+            UpdateCheck.TryParseVersion("1.3.0", out Version newer);
+            UpdateCheck.TryParseVersion("1.2.3", out Version same);
+            Check("a higher release tag compares greater (update available)", newer > cur);
+            Check("an equal tag is not greater (no phantom update)", !(same > cur));
             Console.WriteLine();
         }
 
