@@ -3,8 +3,6 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.9.34728.123
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Savedrake", "Savedrake v1.2.3\Savedrake.csproj", "{890F37B1-D5E4-4375-8790-D94BC4DCED9F}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Savedrake-Updater", "updater\Savedrake-Updater.csproj", "{4593632F-D6F1-425C-83B4-6B70FA3092A4}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RestoreHarness", "RestoreHarness\RestoreHarness.csproj", "{097EDA73-C89A-4DC7-A5F2-0A79CBD658FD}"
@@ -19,10 +17,6 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{890F37B1-D5E4-4375-8790-D94BC4DCED9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{890F37B1-D5E4-4375-8790-D94BC4DCED9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{890F37B1-D5E4-4375-8790-D94BC4DCED9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{890F37B1-D5E4-4375-8790-D94BC4DCED9F}.Release|Any CPU.Build.0 = Release|Any CPU
 		{4593632F-D6F1-425C-83B4-6B70FA3092A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{4593632F-D6F1-425C-83B4-6B70FA3092A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4593632F-D6F1-425C-83B4-6B70FA3092A4}.Release|Any CPU.ActiveCfg = Release|Any CPU

@@ -101,6 +101,17 @@ namespace Savedrake.App.ViewModels
 
         public bool ConfigEditable => !AutobackupEnabled;
 
+        // The shipped version shown by the wordmark, from the assembly version (single source of truth, drives the
+        // update check too) — so a version bump updates the UI automatically instead of via a hardcoded string.
+        public string AppVersion
+        {
+            get
+            {
+                Version v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return v != null ? v.Major + "." + v.Minor + "." + v.Build : "1.4.0";
+            }
+        }
+
         // ----- Backups list -----
 
         public ObservableCollection<BackupRow> Backups { get; } = new ObservableCollection<BackupRow>();
