@@ -1134,24 +1134,29 @@ namespace RestoreHarness
 
         static void Test_FindLatestRealBackup()
         {
-            Console.WriteLine("== load: newest real backup (excludes checkpoints, CreationTime order) ==");
+            Console.WriteLine("== load: newest loadable backup (includes (Pre-Load), excludes (Pre-Restore)) ==");
             string dir = NewDir("flrb");
             string older = Path.Combine(dir, "backup_old.zip");
             string newer = Path.Combine(dir, "backup_new.zip");
-            string preR = Path.Combine(dir, "(Pre-Restore) 240101000000.zip");
             string preL = Path.Combine(dir, "(Pre-Load) 240101000000.zip");
-            foreach (string p in new[] { older, newer, preR, preL }) File.WriteAllText(p, "z");
-            // Make the CHECKPOINTS the newest by CreationTime — they must STILL be excluded.
+            string preR = Path.Combine(dir, "(Pre-Restore) 240101000000.zip");
+            foreach (string p in new[] { older, newer, preL, preR }) File.WriteAllText(p, "z");
             File.SetCreationTimeUtc(older, new DateTime(2024, 1, 1));
             File.SetCreationTimeUtc(newer, new DateTime(2024, 1, 2));
-            File.SetCreationTimeUtc(preR, new DateTime(2024, 1, 9));
-            File.SetCreationTimeUtc(preL, new DateTime(2024, 1, 9));
-            Check("returns newest real backup, checkpoints excluded even when newer",
-                SaveScan.FindLatestRealBackup(dir) == newer);
+            File.SetCreationTimeUtc(preL, new DateTime(2024, 1, 5));   // a (Pre-Load) of more-recent live progress
+            File.SetCreationTimeUtc(preR, new DateTime(2024, 1, 9));   // an undo-checkpoint, newest file of all
+            // (Pre-Load) IS the character's most-recent state -> it wins over older normal backups; the (Pre-Restore)
+            // undo-checkpoint is excluded even though it is the newest file.
+            Check("(Pre-Load) loads as newest state; (Pre-Restore) excluded even when newest",
+                SaveScan.FindLatestRealBackup(dir) == preL);
 
-            string onlyCheckpoints = NewDir("flrb_ck");
-            File.WriteAllText(Path.Combine(onlyCheckpoints, "(Pre-Restore) 1.zip"), "z");
-            Check("only checkpoints -> null", SaveScan.FindLatestRealBackup(onlyCheckpoints) == null);
+            string normalOnly = NewDir("flrb_n");
+            string nb = Path.Combine(normalOnly, "backup_x.zip"); File.WriteAllText(nb, "z");
+            Check("normal backup returned when no snapshots", SaveScan.FindLatestRealBackup(normalOnly) == nb);
+
+            string onlyPreR = NewDir("flrb_ck");
+            File.WriteAllText(Path.Combine(onlyPreR, "(Pre-Restore) 1.zip"), "z");
+            Check("only (Pre-Restore) undo-checkpoint -> null (nothing to load)", SaveScan.FindLatestRealBackup(onlyPreR) == null);
             Check("missing folder -> null (no throw)", SaveScan.FindLatestRealBackup(Path.Combine(dir, "nope")) == null);
             Console.WriteLine();
         }
@@ -1168,7 +1173,8 @@ namespace RestoreHarness
             string[] zips = Directory.GetFiles(target, "*.zip");
             Check("exactly one zip written", zips.Length == 1, "found " + zips.Length);
             Check("name starts with (Pre-Load)", zips.Length == 1 && Path.GetFileName(zips[0]).StartsWith("(Pre-Load)"));
-            Check("snapshot is excluded by FindLatestRealBackup", SaveScan.FindLatestRealBackup(target) == null);
+            Check("snapshot IS loadable as the character's most-recent state",
+                zips.Length == 1 && SaveScan.FindLatestRealBackup(target) == zips[0]);
             Check("no .savedrake.tmp left", Directory.GetFiles(target, "*.savedrake.tmp").Length == 0);
 
             // No save data in live -> justified skip, true, no zip.

@@ -120,21 +120,20 @@ namespace Savedrake
             catch { return false; }
         }
 
-        // The newest REAL backup zip in a character's folder, by CreationTime (matching RefreshBackups' "newest
-        // first"), EXCLUDING (Pre-Restore) and (Pre-Load) snapshots so a load never targets its own safety checkpoint
-        // (a checkpoint's CreationTime is "now", so it would otherwise win). Null when the folder is missing/empty or
-        // holds only checkpoints. Never throws.
+        // The newest backup to LOAD for a character, by CreationTime (matching RefreshBackups' "newest first").
+        // EXCLUDES (Pre-Restore) undo-checkpoints (a restore's "before" snapshot — never the thing you mean to load as
+        // "newest"), but INCLUDES (Pre-Load) snapshots: a (Pre-Load) captures a character's live save at the moment you
+        // last switched away from it, so it IS that character's most-recent state and SHOULD load when you return to it
+        // (otherwise loading the character would silently drop the progress made since its last ordinary backup). This
+        // is safe because the only time a load could re-target a just-taken (Pre-Load) is loading the same character
+        // whose save is already live, which the A==B guard refuses. Null when the folder is missing/empty or holds only
+        // undo-checkpoints. Never throws.
         public static string FindLatestRealBackup(string backupDir)
         {
             try
             {
                 return Directory.GetFiles(backupDir, "*.zip")
-                    .Where(f =>
-                    {
-                        string n = Path.GetFileName(f);
-                        return !n.StartsWith("(Pre-Restore)", StringComparison.OrdinalIgnoreCase)
-                            && !n.StartsWith("(Pre-Load)", StringComparison.OrdinalIgnoreCase);
-                    })
+                    .Where(f => !Path.GetFileName(f).StartsWith("(Pre-Restore)", StringComparison.OrdinalIgnoreCase))
                     .OrderByDescending(f => File.GetCreationTimeUtc(f))
                     .FirstOrDefault();
             }
