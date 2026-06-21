@@ -50,9 +50,18 @@ namespace Savedrake.App.ViewModels
         private string backupDir;
 
         // The active character: the subfolder of BackupDir whose backups are shown and where new backups land. DD2 has
-        // one save slot, so a "character" is a named backup history. Persisted; defaults to "Default".
+        // one save slot, so a "character" is a named backup history. Persisted; defaults to "Default". This is the
+        // character you are VIEWING/managing; switching it never touches the live save.
         [ObservableProperty]
         private string activeCharacter = CharacterFolder.Default;
+
+        // Which character's save is currently LIVE in the DD2 save folder (the one you are PLAYING), as opposed to the
+        // active/viewed character. Persisted; defaults to "Default" (the migrated character). Flips only when a
+        // "Load into game" restore commits, so it always agrees with the live save.
+        [ObservableProperty]
+        private string loadedCharacter = CharacterFolder.Default;
+
+        partial void OnLoadedCharacterChanged(string value) => OnPropertyChanged(nameof(PlayingIndicator));
 
         // IsConfigured/NeedsSetup also depend on Directory.Exists, which can change while the path string does not
         // (folder deleted in Explorer, drive disconnected). During first-run that window is narrow; these hooks
@@ -71,7 +80,7 @@ namespace Savedrake.App.ViewModels
         partial void OnActiveCharacterChanged(string value)
         {
             OnPropertyChanged(nameof(EffectiveBackupDir)); OnPropertyChanged(nameof(CountFilePath));
-            OnPropertyChanged(nameof(BackupsTitle));
+            OnPropertyChanged(nameof(BackupsTitle)); OnPropertyChanged(nameof(PlayingIndicator));
         }
 
         // ----- Autobackup config (bound to the Autobackup card) -----
@@ -248,6 +257,19 @@ namespace Savedrake.App.ViewModels
         // The Backups card title shows which character you are managing.
         public string BackupsTitle => "Backups — " + CharacterFolder.SafeName(ActiveCharacter);
 
+        // The LOADED (currently-playing) character's backup folder, where the outgoing "(Pre-Load)" snapshot is filed.
+        // Mirrors EffectiveBackupDir but keyed on LoadedCharacter, not ActiveCharacter.
+        public string LoadedBackupDir =>
+            string.IsNullOrWhiteSpace(BackupDir)
+                ? BackupDir
+                : Path.Combine(BackupDir, CharacterFolder.SafeName(LoadedCharacter));
+
+        // Header hint shown only while you are viewing a different character than the one that's actually live, so it's
+        // always clear which character the game would load. Empty (and thus collapsed) when viewing == playing.
+        public string PlayingIndicator =>
+            string.Equals(ActiveCharacter, LoadedCharacter, StringComparison.OrdinalIgnoreCase)
+                ? "" : "Playing: " + CharacterFolder.SafeName(LoadedCharacter);
+
         // Make sure the active character's backup folder exists before a backup/restore writes into it. Returns false
         // (never throws) if there is no parent yet or it cannot be created; callers decide how to surface that (a modal
         // for a manual action, a status line for the autobackup engine) so a valid parent is never mistaken for "no
@@ -327,6 +349,10 @@ namespace Savedrake.App.ViewModels
                 var acEl = root.Element("ActiveCharacter");
                 string ac = acEl == null ? null : (string)acEl;
                 ActiveCharacter = CharacterFolder.IsValidName(ac) ? ac.Trim() : CharacterFolder.Default;
+
+                var lcEl = root.Element("LoadedCharacter");
+                string lc = lcEl == null ? null : (string)lcEl;
+                LoadedCharacter = CharacterFolder.IsValidName(lc) ? lc.Trim() : CharacterFolder.Default;
 
                 _setupComplete = ParseBool(root.Element("SetupComplete"));
                 // Self-heal: an existing user with folders already set but no flag is treated as already set up.
@@ -415,6 +441,7 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "Textbox1", SaveDir ?? "");
                 SetElement(root, "Textbox2", BackupDir ?? "");
                 SetElement(root, "ActiveCharacter", string.IsNullOrWhiteSpace(ActiveCharacter) ? CharacterFolder.Default : ActiveCharacter);
+                SetElement(root, "LoadedCharacter", string.IsNullOrWhiteSpace(LoadedCharacter) ? CharacterFolder.Default : LoadedCharacter);
                 SetElement(root, "AutoBackupLimit", MaxBackupsText ?? "");
                 SetElement(root, "CheckboxAuto", AutobackupEnabled.ToString());
                 SetElement(root, "AutoCleanupOldBackups", CleanupEnabled.ToString());
@@ -788,47 +815,48 @@ namespace Savedrake.App.ViewModels
             DoRestore(SelectedBackup.FullPath);
         }
 
-        // The shared restore path (used by Restore and Undo-last-restore): runs the full transactional restore against
-        // a specific backup zip, holding the operation lock + suppressing the save watcher, and advances the
-        // change-aware baseline on success.
+        // The LOCK-FREE restore core: the backup-folder guard + the transactional restore + the change-aware baseline
+        // advance on success. Holds NO operation lock and does NOT touch SuppressSaveWatcher or re-check
+        // _isOperationInProgress — the CALLER owns those, so it can be invoked inside an already-held lock (the "Load
+        // into game" flow) without self-deadlocking or early-returning. Does NOT RefreshBackups (caller's job). Returns
+        // the RestoreResult (null only when the folder guard failed and showed its own error).
+        private RestoreResult DoRestoreCore(string backupZipPath)
+        {
+            if (!EnsureEffectiveDirExists())
+            {
+                _dialog.Error("Restore", "Savedrake could not access this character's backup folder.");
+                return null;
+            }
+            RestoreResult result = RestoreService.Restore(
+                new RestoreRequest
+                {
+                    BackupZipPath = backupZipPath,
+                    LiveSaveDir = SaveDir,
+                    BackupDir = EffectiveBackupDir,
+                    GameRunning = GameDetect.IsDd2Running()
+                },
+                _dialog, _status);
+            // On a SUCCESSFUL restore, advance the change-aware baseline to the now-restored save (mirrors the WinForms
+            // reference). With the baseline now equal to the restored content, a trailing FileSystemWatcher event from
+            // the restore's own writes resolves to SkipNoChange instead of capturing a redundant autobackup. Gated on Ok
+            // so the baseline only moves when the save actually changed (on failure the restore rolled back).
+            if (result != null && result.Ok) _autobackup.NotifyExternalRestore();
+            return result;
+        }
+
+        // The shared restore path (used by Restore and Undo-last-restore): holds the operation lock + suppresses the
+        // save watcher around the lock-free core.
         private void DoRestore(string backupZipPath)
         {
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
-
-            RestoreResult result = null;
             _isOperationInProgress = true;
             _autobackup.SuppressSaveWatcher = true; // the restore writes into the save folder — don't auto-back that up
-            try
-            {
-                if (!EnsureEffectiveDirExists())
-                {
-                    _dialog.Error("Restore", "Savedrake could not access this character's backup folder.");
-                }
-                else
-                {
-                    result = RestoreService.Restore(
-                        new RestoreRequest
-                        {
-                            BackupZipPath = backupZipPath,
-                            LiveSaveDir = SaveDir,
-                            BackupDir = EffectiveBackupDir,
-                            GameRunning = GameDetect.IsDd2Running()
-                        },
-                        _dialog, _status);
-                }
-            }
+            try { DoRestoreCore(backupZipPath); }
             finally
             {
                 _isOperationInProgress = false;
                 _autobackup.SuppressSaveWatcher = false;
             }
-            // On a SUCCESSFUL restore, advance the change-aware baseline to the now-restored save (mirrors the WinForms
-            // reference, which set _lastAutoBackupFingerprint after a successful RestoreTransactional). SuppressSaveWatcher
-            // is cleared in the finally above, so a trailing FileSystemWatcher event from the restore's own writes can
-            // still arrive and, ~4s later, run the change-aware gate; with the baseline now equal to the restored
-            // content that gate resolves to SkipNoChange instead of capturing a redundant autobackup. Gated on Ok so the
-            // baseline only moves when the save actually changed (on failure the restore rolled back to the original).
-            if (result != null && result.Ok) _autobackup.NotifyExternalRestore();
             RefreshBackups();
         }
 
@@ -1091,6 +1119,10 @@ namespace Savedrake.App.ViewModels
                 _dialog.Error("Rename character", "Could not rename this character: " + ex.Message);
                 return;
             }
+            // Keep the "playing" character in sync if we just renamed the folder of the currently-loaded character,
+            // so LoadedCharacter/LoadedBackupDir don't point at the old (now-moved) folder.
+            if (string.Equals(LoadedCharacter, current, StringComparison.OrdinalIgnoreCase))
+                LoadedCharacter = target;
             ActiveCharacter = target;
             SaveSettings();
             _autobackup.OnActiveCharacterChanged();
@@ -1120,6 +1152,89 @@ namespace Savedrake.App.ViewModels
             if (!list.Any(x => string.Equals(x.Name, ActiveCharacter, StringComparison.OrdinalIgnoreCase)))
                 list.Insert(0, (ActiveCharacter, 0));
             return list;
+        }
+
+        // Load the ACTIVE (viewed) character's newest backup into the live DD2 save, making it the character you play.
+        // Snapshots the OUTGOING character's live save first (retention-exempt "(Pre-Load)" in its own folder), then
+        // reuses the hardened transactional restore VERBATIM (its own single game-running guard + single Steam-Cloud
+        // confirm + rollback). LoadedCharacter flips to the active character only when the restore commits, so the
+        // persisted "playing" character and the live save always agree — a cancelled or failed load leaves both as they
+        // were, with no limbo.
+        [RelayCommand]
+        private void LoadIntoGame()
+        {
+            if (!IsConfigured)
+            {
+                _dialog.Info("Load into game", "Please set your save folder and backup folder first.");
+                return;
+            }
+
+            // Computed ONCE: the A==B guard and the snapshot-abort decision must agree on the same reading. If the
+            // live folder changes between this read and the actual snapshot, the (Pre-Load) abort gate may be slightly
+            // stale, but that is not a data path: the destructive restore below takes its OWN fail-closed pre-restore
+            // checkpoint of whatever is actually live before the swap, so the outgoing save is captured regardless.
+            bool liveHasSave = SaveScan.LiveFolderHasRealSave(SaveDir);
+
+            // Loading the character whose save is already live is a rollback, which Restore handles — not Load. (When
+            // the live save is gone, fall through so a deleted save can be recovered by reloading the loaded character.)
+            if (string.Equals(ActiveCharacter, LoadedCharacter, StringComparison.OrdinalIgnoreCase) && liveHasSave)
+            {
+                _dialog.Info("Load into game",
+                    CharacterFolder.SafeName(ActiveCharacter) + " is already loaded. To roll back to an older backup, use Restore.");
+                return;
+            }
+
+            string target = SaveScan.FindLatestRealBackup(EffectiveBackupDir);
+            if (target == null)
+            {
+                _dialog.Info("Load into game",
+                    "No backups yet for " + CharacterFolder.SafeName(ActiveCharacter) + ". Play and back up first.");
+                return;
+            }
+
+            if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
+
+            RestoreResult result = null;
+            _isOperationInProgress = true;
+            _autobackup.SuppressSaveWatcher = true;
+            try
+            {
+                // Step 1 — preserve the OUTGOING character's progress in ITS own folder (only when it differs from the
+                // target). CreatePreLoadCheckpoint applies its own fail-closed no-save skip; abort only if there was
+                // provably a save to keep and the snapshot failed (status only, no state change, no live-save touch).
+                if (!string.Equals(LoadedCharacter, ActiveCharacter, StringComparison.OrdinalIgnoreCase))
+                {
+                    try { Directory.CreateDirectory(LoadedBackupDir); } catch { }
+                    bool snapped = RestoreEngine.CreatePreLoadCheckpoint(SaveDir, LoadedBackupDir);
+                    if (!snapped && liveHasSave)
+                    {
+                        _status.Set("Load cancelled: could not save a snapshot of " +
+                            CharacterFolder.SafeName(LoadedCharacter) + "'s current progress.");
+                        return;
+                    }
+                }
+
+                // Step 2 — load the target via the hardened restore (its own single guard + single confirm + rollback).
+                result = DoRestoreCore(target);
+
+                // Step 3 — flip the persisted "playing" character IFF the live save is now the target.
+                if (result != null && result.Ok)
+                {
+                    LoadedCharacter = ActiveCharacter;
+                    SaveSettings();
+                    _sound.Success();
+                    _status.Set("Now playing as " + CharacterFolder.SafeName(ActiveCharacter) +
+                        ". Your previous character's progress was saved.");
+                }
+                else if (result != null) _sound.Error();
+                // result == null (folder guard) already showed an error; no state change on any failure path.
+            }
+            finally
+            {
+                _isOperationInProgress = false;
+                _autobackup.SuppressSaveWatcher = false;
+            }
+            RefreshBackups();
         }
 
         // Persist the window size (called by the window on close so the next launch restores it).

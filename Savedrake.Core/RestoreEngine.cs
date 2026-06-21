@@ -60,6 +60,56 @@ namespace Savedrake
             }
         }
 
+        // Snapshot the live save into targetFolder as a retention-exempt "(Pre-Load) <ts>" backup, taken before a
+        // "Load into game" replaces the live save with a DIFFERENT character's backup, so the outgoing character's
+        // progress is preserved in ITS own folder. Byte-for-byte identical to CreatePreRestoreCheckpoint above except
+        // the file-name prefix: same live==target guard, same fail-CLOSED no-save-data skip, same temp-build +
+        // verify-on-create (CRC + manifest) + atomic publish. The "(Pre-Load) " prefix makes it identifiable AND keeps
+        // it out of the autobackup count + cleanup (both match only "(Auto)"/"auto"), so no retention change is needed.
+        // Kept as a separate clone (not a shared parameterized method) so this safety-critical path stays auditable.
+        public static bool CreatePreLoadCheckpoint(string liveDir, string targetFolder)
+        {
+            if (string.Equals(Path.GetFullPath(liveDir), Path.GetFullPath(targetFolder), StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            bool hasSaveData;
+            try
+            {
+                hasSaveData = Directory
+                    .EnumerateFiles(liveDir, "*", SearchOption.AllDirectories)
+                    .Any(p => SaveScan.IsRealSaveEntry(Path.GetFileName(p)));
+            }
+            catch (UnauthorizedAccessException) { hasSaveData = true; } // can't scan -> err toward making a checkpoint
+            catch (System.IO.IOException) { hasSaveData = true; }
+            if (!hasSaveData) return true;
+
+            string checkpointPath = BackupNaming.MakeUniquePath(Path.Combine(targetFolder, $"(Pre-Load) {DateTime.Now:yyMMddHHmmss}.zip"));
+            string tempZip = checkpointPath + ".savedrake.tmp";
+            try
+            {
+                try { foreach (string stale in Directory.GetFiles(targetFolder, "*.savedrake.tmp")) File.Delete(stale); } catch { }
+                using (Ionic.Zip.ZipFile zip = new Ionic.Zip.ZipFile())
+                {
+                    zip.AddDirectory(liveDir);
+                    zip.AddEntry(Manifest.ManifestEntryName, System.Text.Encoding.UTF8.GetBytes(Manifest.BuildBackupManifest(liveDir)));
+                    zip.Comment = "SamMorrison9800";
+                    zip.Save(tempZip);
+                }
+                if (!Manifest.VerifyZipRestorable(tempZip, out _) || !Manifest.VerifyZipAgainstManifest(tempZip, out _))
+                {
+                    try { File.Delete(tempZip); } catch { }
+                    return false;
+                }
+                File.Move(tempZip, checkpointPath); // atomically publish the completed checkpoint
+                return true;
+            }
+            catch (Exception)
+            {
+                try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+                return false;
+            }
+        }
+
         public static bool Rollback(string liveDir, string rollbackDir, bool stagingStarted)
         {
             try
