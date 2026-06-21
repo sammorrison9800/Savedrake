@@ -27,6 +27,16 @@ namespace Savedrake.App
         [DllImport("dwmapi.dll", PreserveSig = true)]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
+        // ----- global backup hotkey (RegisterHotKey against this window; WM_HOTKEY -> BackupCommand) -----
+        [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+        [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private const uint MOD_ALT = 0x0001, MOD_CONTROL = 0x0002, MOD_SHIFT = 0x0004;
+        private const int WM_HOTKEY = 0x0312;
+        private const int HotkeyId = 0xB001;
+        private HwndSource _hwndSource;
+        private bool _hotkeyRegistered;
+
         // The system-tray icon (WinForms NotifyIcon; UseWindowsForms is on). Only visible while minimized-to-tray.
         private System.Windows.Forms.NotifyIcon _tray;
 
@@ -41,6 +51,7 @@ namespace Savedrake.App
             {
                 InitTray();
                 (DataContext as Savedrake.App.ViewModels.MainViewModel)?.Activate();
+                RegisterCurrentHotkey();
             };
         }
 
@@ -48,6 +59,57 @@ namespace Savedrake.App
         {
             base.OnSourceInitialized(e);
             ApplyDwmTheming();
+            _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+            _hwndSource?.AddHook(WndProc);
+        }
+
+        // Receives WM_HOTKEY for the registered global backup hotkey and fires a manual backup.
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_HOTKEY && wParam.ToInt32() == HotkeyId)
+            {
+                if (DataContext is Savedrake.App.ViewModels.MainViewModel vm)
+                    vm.BackupCommand.Execute(null);
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        // (Re)register the global hotkey from the view model's saved combo. Refuses a modifier-less combo.
+        private void RegisterCurrentHotkey()
+        {
+            UnregisterCurrentHotkey();
+            if (!(DataContext is Savedrake.App.ViewModels.MainViewModel vm) || !vm.HotkeyEnabled || vm.HotkeyVk == 0) return;
+            IntPtr h = new WindowInteropHelper(this).Handle;
+            if (h == IntPtr.Zero) return;
+            uint mods = (uint)((vm.HotkeyCtrl ? MOD_CONTROL : 0) | (vm.HotkeyShift ? MOD_SHIFT : 0) | (vm.HotkeyAlt ? MOD_ALT : 0));
+            if (mods == 0) return; // never grab a bare key system-wide
+            _hotkeyRegistered = RegisterHotKey(h, HotkeyId, mods, (uint)vm.HotkeyVk);
+        }
+
+        private void UnregisterCurrentHotkey()
+        {
+            if (!_hotkeyRegistered) return;
+            try { UnregisterHotKey(new WindowInteropHelper(this).Handle, HotkeyId); } catch { }
+            _hotkeyRegistered = false;
+        }
+
+        // File > Set backup hotkey: open the recording dialog, then persist + (re)register or clear.
+        private void SetHotkey_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(DataContext is Savedrake.App.ViewModels.MainViewModel vm)) return;
+            var dlg = new HotkeyDialog(vm.HotkeyCtrl, vm.HotkeyShift, vm.HotkeyAlt, vm.HotkeyVk, vm.HotkeyDisplay) { Owner = this };
+            dlg.ShowDialog();
+            if (dlg.Outcome == HotkeyDialogResult.Save)
+            {
+                vm.SetHotkey(dlg.Ctrl, dlg.Shift, dlg.Alt, dlg.Vk, dlg.Display);
+                RegisterCurrentHotkey();
+            }
+            else if (dlg.Outcome == HotkeyDialogResult.Clear)
+            {
+                vm.ClearHotkey();
+                UnregisterCurrentHotkey();
+            }
         }
 
         // Build the tray icon + its Show/Quit menu. Hidden until the window is minimized with "minimize to tray" on.
@@ -96,6 +158,8 @@ namespace Savedrake.App
         // and file-system watcher are stopped and disposed rather than lingering past the window.
         protected override void OnClosed(EventArgs e)
         {
+            UnregisterCurrentHotkey();
+            try { _hwndSource?.RemoveHook(WndProc); } catch { }
             try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; } } catch { }
             (DataContext as IDisposable)?.Dispose();
             base.OnClosed(e);

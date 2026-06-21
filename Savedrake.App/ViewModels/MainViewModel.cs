@@ -213,6 +213,19 @@ namespace Savedrake.App.ViewModels
                 RecycleEnabled = CleanupEnabled && ParseBool(root.Element("RemovedToRecycleBin"));
                 BackupOnSaveEnabled = ParseBool(root.Element("BackupOnSaveChange"));
                 MinimizeToTray = ParseBool(root.Element("CheckboxTray"));
+
+                // Backup hotkey (nested <Hotkey> block + CheckboxHot), shared with the WinForms shape.
+                var hk = root.Element("Hotkey");
+                if (hk != null)
+                {
+                    HotkeyCtrl = ParseBool(hk.Element("ControlPressed"));
+                    HotkeyShift = ParseBool(hk.Element("ShiftPressed"));
+                    HotkeyAlt = ParseBool(hk.Element("AltPressed"));
+                    HotkeyVk = KeyNameToVk((string)hk.Element("MainKey"));
+                    HotkeyDisplay = BuildHotkeyDisplay();
+                }
+                HotkeyEnabled = ParseBool(root.Element("CheckboxHot")) && HotkeyVk != 0;
+
                 AutobackupEnabled = ParseBool(root.Element("CheckboxAuto"));
             }
             catch { /* best-effort: defaults stand */ }
@@ -254,6 +267,17 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "RemovedToRecycleBin", RecycleEnabled.ToString());
                 SetElement(root, "BackupOnSaveChange", BackupOnSaveEnabled.ToString());
                 SetElement(root, "CheckboxTray", MinimizeToTray.ToString());
+
+                // Backup hotkey (nested <Hotkey> block + CheckboxHot + the display string in Textbox3).
+                var hk = root.Element("Hotkey");
+                if (hk == null) { hk = new System.Xml.Linq.XElement("Hotkey"); root.Add(hk); }
+                SetElement(hk, "MainKey", VkToKeyName(HotkeyVk));
+                SetElement(hk, "ControlPressed", HotkeyCtrl.ToString());
+                SetElement(hk, "ShiftPressed", HotkeyShift.ToString());
+                SetElement(hk, "AltPressed", HotkeyAlt.ToString());
+                SetElement(root, "CheckboxHot", HotkeyEnabled.ToString());
+                SetElement(root, "Textbox3", HotkeyDisplay ?? "");
+
                 SetIntervalElements(root);
 
                 doc.Save(SettingsFilePath);
@@ -683,6 +707,49 @@ namespace Savedrake.App.ViewModels
 
         [RelayCommand]
         private void Exit() => System.Windows.Application.Current?.Shutdown();
+
+        // ----- backup hotkey (state lives here + persists; the window does the Win32 RegisterHotKey) -----
+
+        public bool HotkeyCtrl { get; private set; }
+        public bool HotkeyShift { get; private set; }
+        public bool HotkeyAlt { get; private set; }
+        public int HotkeyVk { get; private set; }
+        public bool HotkeyEnabled { get; private set; }
+        public string HotkeyDisplay { get; private set; }
+
+        public void SetHotkey(bool ctrl, bool shift, bool alt, int vk, string display)
+        {
+            HotkeyCtrl = ctrl; HotkeyShift = shift; HotkeyAlt = alt; HotkeyVk = vk;
+            HotkeyDisplay = display; HotkeyEnabled = true;
+            SaveSettings();
+            _status.Set("Backup hotkey set to " + display + ".");
+        }
+
+        public void ClearHotkey()
+        {
+            HotkeyCtrl = HotkeyShift = HotkeyAlt = false; HotkeyVk = 0;
+            HotkeyDisplay = ""; HotkeyEnabled = false;
+            SaveSettings();
+            _status.Set("Backup hotkey cleared.");
+        }
+
+        private static int KeyNameToVk(string name)
+            => !string.IsNullOrWhiteSpace(name) && System.Enum.TryParse(name, out System.Windows.Input.Key k)
+               ? System.Windows.Input.KeyInterop.VirtualKeyFromKey(k) : 0;
+
+        private static string VkToKeyName(int vk)
+            => vk != 0 ? System.Windows.Input.KeyInterop.KeyFromVirtualKey(vk).ToString() : "";
+
+        private string BuildHotkeyDisplay()
+        {
+            if (HotkeyVk == 0) return "";
+            var sb = new System.Text.StringBuilder();
+            if (HotkeyCtrl) sb.Append("Ctrl + ");
+            if (HotkeyShift) sb.Append("Shift + ");
+            if (HotkeyAlt) sb.Append("Alt + ");
+            sb.Append(VkToKeyName(HotkeyVk));
+            return sb.ToString();
+        }
 
         // Send the selected backup(s) to the Recycle Bin (recoverable), supporting multi-select. The selection is
         // passed from the ListView so the toolbar button, the context menu, and the Delete key all act on the same set.
