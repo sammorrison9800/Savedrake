@@ -35,6 +35,37 @@ namespace Savedrake
 
         private static DateTime DirLastWriteUtc(string d) { try { return Directory.GetLastWriteTimeUtc(d); } catch { return DateTime.MinValue; } }
 
+        // The Steam install root: HKCU\Software\Valve\Steam\SteamPath, falling back to %ProgramFiles(x86)%\Steam.
+        // Returns null if neither exists. Never throws. Moved from the WinForms app during the WPF migration so the
+        // "detect save folder" feature works the same in both shells.
+        public static string GetSteamRoot()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam"))
+                {
+                    string p = key?.GetValue("SteamPath") as string;
+                    if (!string.IsNullOrEmpty(p)) { p = p.Replace('/', '\\'); if (Directory.Exists(p)) return p; }
+                }
+            }
+            catch { }
+            try
+            {
+                string def = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Steam");
+                if (Directory.Exists(def)) return def;
+            }
+            catch { }
+            return null;
+        }
+
+        // All existing DD2 save folders on this machine (most-recently-used first), discovered under the detected
+        // Steam root. Empty list when Steam / the saves aren't found. Never throws.
+        public static List<string> FindDd2SaveFolders()
+        {
+            string root = GetSteamRoot();
+            return root != null ? FindDd2SaveFoldersUnder(root) : new List<string>();
+        }
+
         // QoL: a one-line caution about a chosen backup folder, or null if it's fine. Advisory, not blocking. Flags a
         // backup folder inside the save folder, in a cloud-synced folder (OneDrive/Dropbox/Google Drive — sync churn),
         // or on the same drive as the saves (one disk failure loses both). Pure/static so the harness can test it.

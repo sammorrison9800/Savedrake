@@ -103,6 +103,17 @@ namespace Savedrake.App
                 vm.OpenBackupCommand.Execute(vm.SelectedBackup);
         }
 
+        // Open a header button's dropdown (File / Help) as a menu anchored under the button.
+        private void HeaderMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.ContextMenu != null)
+            {
+                b.ContextMenu.PlacementTarget = b;
+                b.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+                b.ContextMenu.IsOpen = true;
+            }
+        }
+
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
         {
             WindowState = WindowState.Minimized;

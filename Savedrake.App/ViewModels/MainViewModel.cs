@@ -467,6 +467,11 @@ namespace Savedrake.App.ViewModels
         {
             string picked = PickFolder(SaveDir);
             if (picked == null) return;
+            if (!string.IsNullOrWhiteSpace(BackupDir) && string.Equals(picked, BackupDir, StringComparison.OrdinalIgnoreCase))
+            {
+                _dialog.Error("Save location", "Your save folder can't be the same as your backup folder.");
+                return;
+            }
             SaveDir = picked;
             SaveSettings();
             RefreshBackups();
@@ -477,6 +482,18 @@ namespace Savedrake.App.ViewModels
         {
             string picked = PickFolder(BackupDir);
             if (picked == null) return;
+            // Validate against the save folder + surface the cloud / same-drive / inside-save advisory (Core).
+            if (!string.IsNullOrWhiteSpace(SaveDir))
+            {
+                if (string.Equals(picked, SaveDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    _dialog.Error("Backup location", "The backup folder can't be the same as your save folder.");
+                    return;
+                }
+                string warning = SaveScan.BackupLocationWarning(SaveDir, picked);
+                if (warning != null && !_dialog.Confirm("Backup location", warning + "\n\nUse this folder anyway?"))
+                    return;
+            }
             BackupDir = picked;
             SaveSettings();
             RefreshBackups();
@@ -520,6 +537,14 @@ namespace Savedrake.App.ViewModels
                 _dialog.Warn("Restore", "Please select a backup to restore first.");
                 return;
             }
+            DoRestore(SelectedBackup.FullPath);
+        }
+
+        // The shared restore path (used by Restore and Undo-last-restore): runs the full transactional restore against
+        // a specific backup zip, holding the operation lock + suppressing the save watcher, and advances the
+        // change-aware baseline on success.
+        private void DoRestore(string backupZipPath)
+        {
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
             RestoreResult result = null;
@@ -530,7 +555,7 @@ namespace Savedrake.App.ViewModels
                 result = RestoreService.Restore(
                     new RestoreRequest
                     {
-                        BackupZipPath = SelectedBackup.FullPath,
+                        BackupZipPath = backupZipPath,
                         LiveSaveDir = SaveDir,
                         BackupDir = BackupDir,
                         GameRunning = GameDetect.IsDd2Running()
@@ -551,6 +576,101 @@ namespace Savedrake.App.ViewModels
             if (result != null && result.Ok) _autobackup.NotifyExternalRestore();
             RefreshBackups();
         }
+
+        // ----- File / Help menu commands -----
+
+        // Roll the live save back to the automatic snapshot taken just before the last restore. Re-runs the full
+        // restore flow against that checkpoint (so the undo is itself snapshotted, and the Steam-Cloud guidance shows).
+        [RelayCommand]
+        private void UndoLastRestore()
+        {
+            if (string.IsNullOrWhiteSpace(BackupDir) || !Directory.Exists(BackupDir))
+            {
+                _dialog.Info("Undo last restore", "Please set your backup folder first.");
+                return;
+            }
+            string checkpoint = SaveScan.FindLatestPreRestoreCheckpoint(BackupDir);
+            if (checkpoint == null)
+            {
+                _dialog.Info("Nothing to undo",
+                    "There is no snapshot to undo. Savedrake automatically saves a snapshot of your current save each " +
+                    "time you restore a backup, so an undo only becomes available after a restore.");
+                return;
+            }
+            string when = Path.GetFileNameWithoutExtension(checkpoint).Replace("(Pre-Restore)", "").Trim();
+            if (!_dialog.Confirm("Undo last restore",
+                    "This rolls your save back to the snapshot Savedrake took just before your last restore" +
+                    (when.Length > 0 ? " (" + when + ")" : "") + ".\n\n" +
+                    "Your current save is snapshotted first, so you can redo.\n\nUndo the last restore?"))
+                return;
+            DoRestore(checkpoint);
+        }
+
+        // Auto-find the DD2 save folder via Steam and offer to set it. Only changes the folder on a Yes.
+        [RelayCommand]
+        private void DetectSaveFolder()
+        {
+            if (!ConfigEditable)
+            {
+                _dialog.Info("Detect save folder", "Turn off autobackup before changing the save folder.");
+                return;
+            }
+            List<string> found;
+            try { found = SaveScan.FindDd2SaveFolders(); } catch { found = new List<string>(); }
+            if (found.Count == 0)
+            {
+                _dialog.Info("Detect save folder",
+                    "Savedrake could not find a Dragon's Dogma 2 save folder automatically. Make sure Steam is installed " +
+                    "and you have run the game at least once, or set the folder with Browse.");
+                return;
+            }
+            string best = found[0];
+            string extra = found.Count > 1
+                ? "\n\n(" + (found.Count - 1) + " other Steam profile" + (found.Count > 2 ? "s were" : " was") +
+                  " also found; this is the most recently used.)"
+                : "";
+            if (_dialog.Confirm("Detect save folder", "Found your Dragon's Dogma 2 saves here:\n\n" + best + extra + "\n\nUse this folder?"))
+            {
+                SaveDir = best;
+                SaveSettings();
+                RefreshBackups();
+                _status.Set("Save game folder set automatically.");
+            }
+        }
+
+        [RelayCommand]
+        private void OpenFaq()
+        {
+            if (_dialog.Confirm("Open FAQ", "This will open the FAQ page on Nexusmods in your browser. Continue?"))
+                OpenUrl("https://www.nexusmods.com/dragonsdogma2/mods/772/?tab=posts");
+        }
+
+        [RelayCommand]
+        private void OpenAbout()
+        {
+            if (_dialog.Confirm("Open About", "This will open Savedrake's Nexusmods page in your browser. Continue?"))
+                OpenUrl("https://www.nexusmods.com/dragonsdogma2/mods/772?tab=description");
+        }
+
+        private void OpenUrl(string url)
+        {
+            try { System.Diagnostics.Process.Start(url); }
+            catch (Exception ex) { _dialog.Error("Open Link", "Could not open the link: " + ex.Message); }
+        }
+
+        [RelayCommand]
+        private void OpenLogFolder()
+        {
+            try
+            {
+                Directory.CreateDirectory(Log.Directory());
+                System.Diagnostics.Process.Start("explorer.exe", Log.Directory());
+            }
+            catch (Exception ex) { _dialog.Error("Open log folder", "Could not open the log folder: " + ex.Message); }
+        }
+
+        [RelayCommand]
+        private void Exit() => System.Windows.Application.Current?.Shutdown();
 
         // Send the selected backup(s) to the Recycle Bin (recoverable), supporting multi-select. The selection is
         // passed from the ListView so the toolbar button, the context menu, and the Delete key all act on the same set.

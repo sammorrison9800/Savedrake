@@ -614,6 +614,22 @@ namespace RestoreHarness
             Check("finds both DD2 Steam profiles", F(root).Count == 2);
 
             Check("missing steam root -> empty (no throw)", F(Path.Combine(work, "no_steam_" + Guid.NewGuid().ToString("N").Substring(0, 6))).Count == 0);
+
+            // Phase 6d: GetSteamRoot + the no-arg FindDd2SaveFolders (registry/filesystem). They must never throw and
+            // must return sane shapes regardless of whether Steam/DD2 are present on the build box.
+            var getRoot = CM("SaveScan", "GetSteamRoot");
+            var findAll = CM("SaveScan", "FindDd2SaveFolders");
+            bool threw = false; string sroot = null; System.Collections.Generic.List<string> all = null;
+            try
+            {
+                sroot = (string)getRoot.Invoke(null, null);
+                all = ((System.Collections.IEnumerable)findAll.Invoke(null, null)).Cast<string>().ToList();
+            }
+            catch { threw = true; }
+            Check("GetSteamRoot + FindDd2SaveFolders do not throw", !threw);
+            Check("GetSteamRoot is null or an existing directory", sroot == null || Directory.Exists(sroot), "root=" + sroot);
+            Check("FindDd2SaveFolders returns a non-null list", all != null);
+            Check("every detected save folder exists", all == null || all.All(Directory.Exists));
             Console.WriteLine();
         }
 
