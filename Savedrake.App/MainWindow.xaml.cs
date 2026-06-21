@@ -285,6 +285,30 @@ namespace Savedrake.App
             }
         }
 
+        // Build + open the character switcher: one checkable row per character (switch on click), then "New character".
+        private void CharacterMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button b) || !(DataContext is ViewModels.MainViewModel vm)) return;
+            var menu = new ContextMenu
+            {
+                PlacementTarget = b,
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
+            };
+            foreach (var c in vm.EnumerateCharacters())
+            {
+                menu.Items.Add(new MenuItem
+                {
+                    Header = c.Name + "   (" + c.FileCount + (c.FileCount == 1 ? " file)" : " files)"),
+                    IsChecked = string.Equals(c.Name, vm.ActiveCharacter, System.StringComparison.OrdinalIgnoreCase),
+                    Command = vm.SwitchCharacterCommand,
+                    CommandParameter = c.Name
+                });
+            }
+            menu.Items.Add(new Separator());
+            menu.Items.Add(new MenuItem { Header = "New character…", Command = vm.NewCharacterCommand });
+            menu.IsOpen = true;
+        }
+
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
         {
             WindowState = WindowState.Minimized;

@@ -103,6 +103,8 @@ namespace RestoreHarness
                 Test_GameDetect();   // Phase 5: DD2 running-state registry read returns a bool and never throws
                 Test_SaveReadiness();   // "back up after the save settles": defer while a save file is exclusively locked
                 Test_UpdateCheck();   // Phase 6i: update version parsing (strip v, 2-4 numeric parts) + comparison
+                Test_CharacterFolder();   // Characters: safe single-segment folder-name validation + SafeName clamp
+                Test_CharacterMigration();   // Characters: non-destructive, idempotent, resumable loose->Default migration
             }
             catch (Exception ex)
             {
@@ -976,6 +978,132 @@ namespace RestoreHarness
             bool threw = false;
             try { SaveReadiness.IsSaveSettled(null); } catch { threw = true; }
             Check("IsSaveSettled(null) never throws", !threw);
+            Console.WriteLine();
+        }
+
+        static void Test_CharacterFolder()
+        {
+            Console.WriteLine("== characters: name validation ==");
+            foreach (string ok in new[] { "Aldric", "My Hero 2", "a-b_c", "Default", new string('x', 40) })
+                Check("valid name: '" + ok + "'",
+                    CharacterFolder.IsValidName(ok) && CharacterFolder.SafeName(ok) == ok.Trim());
+
+            string[] bad = { null, "", "   ", "a/b", "a\\b", "a:b", ".", "..", " leading", "trailing ", "trailing.",
+                             "con", "CON", "nul", "COM1", "LPT9", new string('y', 41) };
+            foreach (string b in bad)
+                Check("invalid name: '" + (b ?? "<null>") + "'",
+                    !CharacterFolder.IsValidName(b) && CharacterFolder.SafeName(b) == "Default");
+
+            foreach (char c in Path.GetInvalidFileNameChars())
+                Check("invalid filename char rejected: U+" + ((int)c).ToString("X4"),
+                    !CharacterFolder.IsValidName("a" + c + "b"));
+            Console.WriteLine();
+        }
+
+        static void Test_CharacterMigration()
+        {
+            Console.WriteLine("== characters: non-destructive migration ==");
+
+            // loose -> Default, plus idempotent re-run
+            {
+                string bd = NewDir("mig_loose");
+                File.WriteAllText(Path.Combine(bd, "a.zip"), "A");
+                File.WriteAllText(Path.Combine(bd, "b.zip"), "B");
+                File.WriteAllText(Path.Combine(bd, "c.zip"), "C");
+                File.WriteAllText(Path.Combine(bd, "notes.txt"), "keep");
+                var r = CharacterMigration.MigrateLooseToDefault(bd);
+                string def = Path.Combine(bd, "Default");
+                Check("loose->Default: Ran with 3 moved", r.Ran && r.MovedZips == 3);
+                Check("loose->Default: all 3 zips under Default", Directory.GetFiles(def, "*.zip").Length == 3);
+                Check("loose->Default: none left loose", Directory.GetFiles(bd, "*.zip").Length == 0);
+                Check("loose->Default: notes.txt untouched", File.Exists(Path.Combine(bd, "notes.txt")));
+                var r2 = CharacterMigration.MigrateLooseToDefault(bd);
+                Check("idempotent: second run does nothing", !r2.Ran && Directory.GetFiles(def, "*.zip").Length == 3);
+            }
+
+            // real second character -> hands off
+            {
+                string bd = NewDir("mig_handsoff");
+                File.WriteAllText(Path.Combine(bd, "loose.zip"), "x");
+                Directory.CreateDirectory(Path.Combine(bd, "Bjorn"));
+                Check("second char: NeedsMigration false", !CharacterMigration.NeedsMigration(bd));
+                var r = CharacterMigration.MigrateLooseToDefault(bd);
+                Check("second char: hands off (loose stays)", !r.Ran && File.Exists(Path.Combine(bd, "loose.zip")));
+            }
+
+            // interrupted-migration resume: pre-existing Default + leftover loose zips
+            {
+                string bd = NewDir("mig_resume");
+                Directory.CreateDirectory(Path.Combine(bd, "Default"));
+                File.WriteAllText(Path.Combine(bd, "Default", "old.zip"), "old");
+                File.WriteAllText(Path.Combine(bd, "left1.zip"), "1");
+                File.WriteAllText(Path.Combine(bd, "left2.zip"), "2");
+                Check("resume: NeedsMigration true", CharacterMigration.NeedsMigration(bd));
+                var r = CharacterMigration.MigrateLooseToDefault(bd);
+                string def = Path.Combine(bd, "Default");
+                Check("resume: leftovers finished (3 total)", r.Ran && Directory.GetFiles(def, "*.zip").Length == 3);
+                Check("resume: no loose left", Directory.GetFiles(bd, "*.zip").Length == 0);
+            }
+
+            // name collision: never overwrite
+            {
+                string bd = NewDir("mig_collide");
+                Directory.CreateDirectory(Path.Combine(bd, "Default"));
+                File.WriteAllText(Path.Combine(bd, "Default", "dup.zip"), "ORIGINAL");
+                File.WriteAllText(Path.Combine(bd, "dup.zip"), "LOOSE");
+                var r = CharacterMigration.MigrateLooseToDefault(bd);
+                Check("collision: skipped not moved", r.SkippedZips == 1);
+                Check("collision: existing copy unchanged", File.ReadAllText(Path.Combine(bd, "Default", "dup.zip")) == "ORIGINAL");
+                Check("collision: loose copy left in place", File.Exists(Path.Combine(bd, "dup.zip")));
+            }
+
+            // parent .savedrake.tmp swept
+            {
+                string bd = NewDir("mig_tmp");
+                File.WriteAllText(Path.Combine(bd, "a.zip"), "A");
+                File.WriteAllText(Path.Combine(bd, "stale.savedrake.tmp"), "junk");
+                CharacterMigration.MigrateLooseToDefault(bd);
+                Check("orphan .savedrake.tmp swept", !File.Exists(Path.Combine(bd, "stale.savedrake.tmp")));
+            }
+
+            // legacy global count file pulled into Default
+            {
+                string bd = NewDir("mig_count");
+                File.WriteAllText(Path.Combine(bd, "a.zip"), "A");
+                string legacy = Path.Combine(bd, "legacy_count.txt");
+                File.WriteAllText(legacy, "7");
+                var r = CharacterMigration.MigrateLooseToDefault(bd, legacy);
+                string destCount = Path.Combine(bd, "Default", "count_of_autobackups.txt");
+                Check("legacy count moved into Default", r.MovedCountFile && File.Exists(destCount));
+                Check("legacy count gone from origin", !File.Exists(legacy));
+                Check("legacy count bytes preserved", File.ReadAllText(destCount) == "7");
+            }
+
+            // locked file: skipped, rest move, resumable after unlock
+            {
+                string bd = NewDir("mig_lock");
+                File.WriteAllText(Path.Combine(bd, "free.zip"), "F");
+                string locked = Path.Combine(bd, "locked.zip");
+                File.WriteAllText(locked, "L");
+                using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    var r = CharacterMigration.MigrateLooseToDefault(bd);
+                    Check("locked: free moved, locked skipped",
+                        Directory.GetFiles(Path.Combine(bd, "Default"), "*.zip").Length == 1 && r.SkippedZips == 1);
+                    Check("locked: still loose at root", File.Exists(locked));
+                }
+                CharacterMigration.MigrateLooseToDefault(bd);
+                Check("locked: resumes after unlock", Directory.GetFiles(Path.Combine(bd, "Default"), "*.zip").Length == 2);
+            }
+
+            // empty / nonexistent: no-op, no throw
+            {
+                var r1 = CharacterMigration.MigrateLooseToDefault("");
+                var r2 = CharacterMigration.MigrateLooseToDefault(Path.Combine(work, "nope_" + Guid.NewGuid().ToString("N")));
+                Check("empty/nonexistent: Ran false, no throw", !r1.Ran && !r2.Ran);
+                Check("empty/null: NeedsMigration false",
+                    !CharacterMigration.NeedsMigration("") && !CharacterMigration.NeedsMigration(null));
+            }
             Console.WriteLine();
         }
 

@@ -48,6 +48,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />   <!-- brand token -->
                     <ColumnDefinition Width="Auto" />   <!-- wordmark + version -->
+                    <ColumnDefinition Width="Auto" />   <!-- character switcher -->
                     <ColumnDefinition Width="*" />      <!-- drag spacer -->
                     <ColumnDefinition Width="Auto" />   <!-- right controls -->
                 </Grid.ColumnDefinitions>
@@ -74,8 +75,20 @@
                                VerticalAlignment="Bottom" Margin="8,0,0,5" />
                 </StackPanel>
 
+                <!-- Character switcher: which character's backups you're managing. Clickable (opt out of caption drag). -->
+                <Button Grid.Column="2" Style="{StaticResource HeaderMenuButton}" Margin="18,0,0,0"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                        Click="CharacterMenu_Click" ToolTip="Switch character — each keeps its own backups">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Character:" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding ActiveCharacter}" Foreground="{DynamicResource WordmarkBrush}"
+                                   FontWeight="SemiBold" Margin="6,0,4,0" VerticalAlignment="Center" />
+                        <TextBlock Text="&#x25BE;" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
                 <!-- Right-side controls: clickable (opt out of caption drag). -->
-                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True">
                     <Button Content="File" Style="{StaticResource HeaderMenuButton}" Click="HeaderMenu_Click">
                         <Button.ContextMenu>
@@ -336,7 +349,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Backups" Style="{StaticResource SectionTitle}"
+                        <TextBlock Grid.Column="0" Text="{Binding BackupsTitle}" Style="{StaticResource SectionTitle}"
                                    Margin="0" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
