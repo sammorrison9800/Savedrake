@@ -83,11 +83,24 @@
                                           Command="{Binding PlacementTarget.DataContext.UndoLastRestoreCommand,
                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
+                                <MenuItem Header="Backup name format">
+                                    <MenuItem Header="Randomly generated"
+                                              IsChecked="{Binding PlacementTarget.DataContext.UseRandomName,
+                                                          RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=OneWay}"
+                                              Command="{Binding PlacementTarget.DataContext.NameFormatRandomCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    <MenuItem Header="Time stamped"
+                                              IsChecked="{Binding PlacementTarget.DataContext.UseTimestampName,
+                                                          RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=OneWay}"
+                                              Command="{Binding PlacementTarget.DataContext.NameFormatTimestampCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                </MenuItem>
                                 <MenuItem Header="Set backup hotkey…" Click="SetHotkey_Click" />
                                 <MenuItem Header="Minimize to system tray" IsCheckable="True"
                                           IsChecked="{Binding PlacementTarget.DataContext.MinimizeToTray,
                                                       RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=TwoWay}" />
                                 <Separator />
+                                <MenuItem Header="Reset Savedrake…" Click="Reset_Click" />
                                 <MenuItem Header="Exit"
                                           Command="{Binding PlacementTarget.DataContext.ExitCommand,
                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}" />

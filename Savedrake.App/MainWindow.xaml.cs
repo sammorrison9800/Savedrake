@@ -49,8 +49,14 @@ namespace Savedrake.App
             // tray icon is created here too (after the window exists).
             Loaded += (s, e) =>
             {
+                var vm = DataContext as Savedrake.App.ViewModels.MainViewModel;
+                if (vm != null && vm.WindowWidth > 0 && vm.WindowHeight > 0)
+                {
+                    Width = vm.WindowWidth;
+                    Height = vm.WindowHeight;
+                }
                 InitTray();
-                (DataContext as Savedrake.App.ViewModels.MainViewModel)?.Activate();
+                vm?.Activate();
                 RegisterCurrentHotkey();
             };
         }
@@ -161,8 +167,34 @@ namespace Savedrake.App
             UnregisterCurrentHotkey();
             try { _hwndSource?.RemoveHook(WndProc); } catch { }
             try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; } } catch { }
+            // Persist the window size for next launch (RestoreBounds is the normal-state size even if minimized/maximized).
+            if (DataContext is Savedrake.App.ViewModels.MainViewModel vm)
+            {
+                try { var b = RestoreBounds; if (b.Width > 0 && b.Height > 0) vm.SaveWindowSize((int)b.Width, (int)b.Height); } catch { }
+            }
             (DataContext as IDisposable)?.Dispose();
             base.OnClosed(e);
+        }
+
+        // File > Reset Savedrake: delete the persisted state and close (Environment.Exit so nothing re-creates it).
+        private void Reset_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(DataContext is Savedrake.App.ViewModels.MainViewModel vm)) return;
+            if (MessageBox.Show("This will reset all Savedrake settings to default and close the app. Continue?",
+                    "Reset Savedrake", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            if (!vm.ResetState())
+            {
+                MessageBox.Show("Some settings files could not be deleted (they may be in use). Close Savedrake and " +
+                    "delete them from %APPDATA%\\Savedrake manually, or try again.",
+                    "Reset Incomplete", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            MessageBox.Show("Reset successful. Savedrake will now close.", "Reset Savedrake",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; } } catch { }
+            Environment.Exit(0); // NOT Close() — that would run OnClosed -> SaveWindowSize and re-create the file
         }
 
         // Ask DWM to round corners, go dark, and tint the caption to our bar color. Each call is guarded:
