@@ -94,10 +94,18 @@ namespace Savedrake.App.ViewModels
 
             LoadSettings();
             RefreshBackups();
-
-            _autobackup.Start();              // begin watching DD2's running state
-            EngageAutobackupIfEnabled();      // re-engage a saved-on autobackup (quietly, before hooks go live)
             _loaded = true;
+            // The WMI watcher and any saved-on autobackup re-engage are deferred to Activate(), which the window calls
+            // once it exists — so a limit/invalid dialog from the immediate game-start backup has a real owner window
+            // and the WMI watcher can't fire a status change mid-construction.
+        }
+
+        // Called by the window once it is loaded. Starts watching DD2's running state and re-engages a saved-on
+        // autobackup. Kept off the constructor so any modal it raises owns the (now-real) window.
+        public void Activate()
+        {
+            _autobackup.Start();
+            EngageAutobackupIfEnabled();
         }
 
         // ================= IAutobackupHost (live config + effects the controller reads) =================
@@ -110,9 +118,13 @@ namespace Savedrake.App.ViewModels
 
         public int MaxAutobackups => int.TryParse(MaxBackupsText, out int n) ? n : 0;
 
-        public bool MaxAutobackupsValid => int.TryParse(MaxBackupsText, out _);
+        // A valid limit is a positive whole number. A zero/negative limit would let autobackup engage and then
+        // immediately self-disable with a nonsensical "maximum number of 0 autobackups reached" message.
+        public bool MaxAutobackupsValid => int.TryParse(MaxBackupsText, out int n) && n >= 1;
 
         public string CountFilePath => Path.Combine(AppDataDir, "count_of_autobackups.txt");
+
+        public string IntervalDisplay => string.IsNullOrWhiteSpace(IntervalText) ? "the set interval" : IntervalText.Trim();
 
         public bool IsOperationInProgress => _isOperationInProgress;
 
@@ -266,7 +278,13 @@ namespace Savedrake.App.ViewModels
             if (!AutobackupEnabled) return;
             if (_autobackup.NoGame || !ValidateAutobackupDirectories(silent: true))
             {
-                AutobackupEnabled = false;
+                // Saved-on autobackup can't engage (DD2 missing or the folders/interval/limit are no longer valid).
+                // Turn it off WITHOUT re-running the enable hooks, and persist so the on-disk CheckboxAuto matches
+                // the UI (otherwise the shared settings file would keep claiming autobackup is on).
+                _inEnableChange = true;
+                try { AutobackupEnabled = false; }
+                finally { _inEnableChange = false; }
+                SaveSettings();
                 return;
             }
             _autobackup.OnEnableOrConfigChanged();
@@ -390,6 +408,9 @@ namespace Savedrake.App.ViewModels
             {
                 BackupCount = "0";
                 SelectedBackup = null;
+                // No valid backup folder -> the on-disk autobackup count is zero. Keep the count file honest so a
+                // later re-point doesn't inherit a stale count.
+                AutobackupCountStore.Write(CountFilePath, 0);
                 return;
             }
 
@@ -424,6 +445,11 @@ namespace Savedrake.App.ViewModels
             }
 
             BackupCount = Backups.Count.ToString();
+
+            // Recompute and persist the autobackup count (non-pinned "(Auto)"/"auto" zips) so the "Keep at most N"
+            // limit is enforced against the real files on disk. This is the writer the autobackup engine reads back;
+            // without it the limit never triggers. Mirrors WinForms LoadBackupHistory.
+            AutobackupCountStore.RecomputeAndWrite(dir, CountFilePath);
         }
 
         // ================= folder pickers =================
@@ -488,11 +514,12 @@ namespace Savedrake.App.ViewModels
             }
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
+            RestoreResult result = null;
             _isOperationInProgress = true;
             _autobackup.SuppressSaveWatcher = true; // the restore writes into the save folder — don't auto-back that up
             try
             {
-                RestoreService.Restore(
+                result = RestoreService.Restore(
                     new RestoreRequest
                     {
                         BackupZipPath = SelectedBackup.FullPath,
@@ -507,6 +534,13 @@ namespace Savedrake.App.ViewModels
                 _isOperationInProgress = false;
                 _autobackup.SuppressSaveWatcher = false;
             }
+            // On a SUCCESSFUL restore, advance the change-aware baseline to the now-restored save (mirrors the WinForms
+            // reference, which set _lastAutoBackupFingerprint after a successful RestoreTransactional). SuppressSaveWatcher
+            // is cleared in the finally above, so a trailing FileSystemWatcher event from the restore's own writes can
+            // still arrive and, ~4s later, run the change-aware gate; with the baseline now equal to the restored
+            // content that gate resolves to SkipNoChange instead of capturing a redundant autobackup. Gated on Ok so the
+            // baseline only moves when the save actually changed (on failure the restore rolled back to the original).
+            if (result != null && result.Ok) _autobackup.NotifyExternalRestore();
             RefreshBackups();
         }
 
@@ -518,20 +552,29 @@ namespace Savedrake.App.ViewModels
                 _dialog.Warn("Delete", "Please select a backup to delete first.");
                 return;
             }
+            if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
             BackupRow row = SelectedBackup;
-            if (!_dialog.Confirm("Delete Backup", "Delete this backup permanently?\n\n" + row.FileName))
-                return;
 
+            // Hold the operation lock across the whole delete, including the confirm dialog. The modal pumps the
+            // Dispatcher queue, so without the lock a queued autobackup tick could fire and rebuild the list (nulling
+            // SelectedBackup) mid-delete.
+            _isOperationInProgress = true;
             try
             {
-                File.Delete(row.FullPath);
-                _status.Set("Backup deleted.");
+                if (!_dialog.Confirm("Delete Backup", "Delete this backup permanently?\n\n" + row.FileName))
+                    return;
+                try
+                {
+                    File.Delete(row.FullPath);
+                    _status.Set("Backup deleted.");
+                }
+                catch (Exception ex)
+                {
+                    _dialog.Error("Delete Failed", "Could not delete the backup: " + ex.Message);
+                }
             }
-            catch (Exception ex)
-            {
-                _dialog.Error("Delete Failed", "Could not delete the backup: " + ex.Message);
-            }
+            finally { _isOperationInProgress = false; }
             RefreshBackups();
         }
 

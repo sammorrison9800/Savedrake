@@ -28,6 +28,9 @@ namespace Savedrake.App
         {
             InitializeComponent();
             DataContext = new Savedrake.App.ViewModels.MainViewModel();
+            // Start the autobackup engine (WMI watcher) and re-engage a saved-on autobackup only once the window is
+            // loaded, so any limit/invalid dialog from the immediate game-start backup has a real owner window.
+            Loaded += (s, e) => (DataContext as Savedrake.App.ViewModels.MainViewModel)?.Activate();
         }
 
         protected override void OnSourceInitialized(EventArgs e)
