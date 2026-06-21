@@ -30,6 +30,12 @@
     <Reference Include="System.Management" />
   </ItemGroup>
 
+  <!-- Microsoft.VisualBasic: FileIO.FileSystem.DeleteFile (send a deleted backup to the Recycle Bin, so deletes are
+       recoverable) and Interaction.InputBox (the rename prompt). Framework assembly on net48, named explicitly. -->
+  <ItemGroup>
+    <Reference Include="Microsoft.VisualBasic" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Savedrake.Core\Savedrake.Core.csproj" />
   </ItemGroup>

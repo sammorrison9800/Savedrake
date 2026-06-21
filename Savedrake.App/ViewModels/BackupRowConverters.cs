@@ -28,40 +28,45 @@ namespace Savedrake.App.ViewModels
             => Binding.DoNothing;
     }
 
-    // A BackupRow -> the pill TEXT: "pinned" when pinned, otherwise the lower-cased status ("protected" / "legacy").
-    public sealed class RowToPillTextConverter : IValueConverter
+    // (IsPinned, Status) -> the pill TEXT: "pinned" when pinned, otherwise the lower-cased status ("protected",
+    // "legacy", "validated", "corrupt", "missing"). A MultiBinding so the pill refreshes when "Validate all" upgrades
+    // an observable Status in place.
+    public sealed class PinStatusToPillTextConverter : IMultiValueConverter
     {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
         {
-            var row = value as BackupRow;
-            if (row == null) return "";
-            if (row.IsPinned) return "pinned";
-            return (row.Status ?? "").ToLowerInvariant();
+            bool pinned = values.Length > 0 && values[0] is bool b && b;
+            if (pinned) return "pinned";
+            string status = values.Length > 1 ? values[1] as string : null;
+            return (status ?? "").ToLowerInvariant();
         }
 
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-            => Binding.DoNothing;
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+            => null;
     }
 
-    // A BackupRow -> the pill FOREGROUND brush: gold when pinned, green ("Success") when Protected, muted
-    // (TextSecondary) for Legacy / anything else.
-    public sealed class RowToPillBrushConverter : IValueConverter
+    // (IsPinned, Status) -> the pill FOREGROUND brush: gold when pinned; green for a healthy backup
+    // (Protected / Validated); red for a broken one (Corrupt / Missing); muted for Legacy or anything else.
+    public sealed class PinStatusToPillBrushConverter : IMultiValueConverter
     {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
         {
-            var row = value as BackupRow;
-            string key = "TextSecondaryBrush";
-            if (row != null)
-            {
-                if (row.IsPinned) key = "AccentGoldBrush";
-                else if (string.Equals(row.Status, "Protected", StringComparison.OrdinalIgnoreCase)) key = "SuccessBrush";
-                else key = "TextSecondaryBrush";
-            }
+            bool pinned = values.Length > 0 && values[0] is bool b && b;
+            string status = values.Length > 1 ? values[1] as string : null;
+
+            string key;
+            if (pinned) key = "AccentGoldBrush";
+            else if (Eq(status, "Protected") || Eq(status, "Validated")) key = "SuccessBrush";
+            else if (Eq(status, "Corrupt") || Eq(status, "Missing")) key = "DangerBrush";
+            else key = "TextSecondaryBrush";
+
             object res = System.Windows.Application.Current?.TryFindResource(key);
             return res ?? Binding.DoNothing;
         }
 
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-            => Binding.DoNothing;
+        private static bool Eq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+            => null;
     }
 }

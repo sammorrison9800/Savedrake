@@ -24,8 +24,8 @@
         <!-- Display-only converters for the Backups list rows. -->
         <vm:PinnedToBrushConverter x:Key="PinDotBrush" OnKey="AccentGoldBrush" OffKey="TextSecondaryBrush" />
         <vm:PinnedToBrushConverter x:Key="PinNameBrush" OnKey="AccentGoldBrush" OffKey="TextBrush" />
-        <vm:RowToPillTextConverter x:Key="PillText" />
-        <vm:RowToPillBrushConverter x:Key="PillBrush" />
+        <vm:PinStatusToPillTextConverter x:Key="PillText" />
+        <vm:PinStatusToPillBrushConverter x:Key="PillBrush" />
     </Window.Resources>
 
     <!-- Outer margin so the espresso shell shows around the content. -->
@@ -199,13 +199,17 @@
                                 <Button Content="Restore" Style="{StaticResource OutlineButton}"
                                         Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}" />
                                 <Button Content="Delete" Style="{StaticResource DangerButton}"
-                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}" />
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
+                                        CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
                             </StackPanel>
                         </Grid>
 
-                        <!-- Backup list: dark, header-less, custom row template. -->
-                        <ListView ItemsSource="{Binding Backups}"
+                        <!-- Backup list: dark, header-less, custom row template. Multi-select for delete. -->
+                        <ListView x:Name="BackupList" ItemsSource="{Binding Backups}"
                                   SelectedItem="{Binding SelectedBackup, Mode=TwoWay}"
+                                  SelectionMode="Extended"
+                                  KeyDown="BackupList_KeyDown"
+                                  MouseDoubleClick="BackupList_MouseDoubleClick"
                                   Background="{StaticResource CardBrush}"
                                   BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                   Foreground="{StaticResource TextBrush}"
@@ -249,16 +253,26 @@
                                 </Style>
                             </ListView.ItemContainerStyle>
 
-                            <!-- Right-click actions. Delete is wired; the rest are stubs for a later phase. -->
+                            <!-- Right-click actions. Bound through the ListView's PlacementTarget to the view model. -->
                             <ListView.ContextMenu>
                                 <ContextMenu>
-                                    <MenuItem Header="Rename" IsEnabled="False" />
+                                    <MenuItem Header="Rename"
+                                              Command="{Binding PlacementTarget.DataContext.RenameCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    <MenuItem Header="{Binding PlacementTarget.DataContext.PinMenuLabel,
+                                                      RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              Command="{Binding PlacementTarget.DataContext.PinCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    <Separator />
                                     <MenuItem Header="Delete"
                                               Command="{Binding PlacementTarget.DataContext.DeleteCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.SelectedItems,
                                                         RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                    <MenuItem Header="Pin" IsEnabled="False" />
                                     <Separator />
-                                    <MenuItem Header="Validate all" IsEnabled="False" />
+                                    <MenuItem Header="Validate all"
+                                              Command="{Binding PlacementTarget.DataContext.ValidateAllCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 </ContextMenu>
                             </ListView.ContextMenu>
 
@@ -282,12 +296,23 @@
                                                    FontSize="13" TextTrimming="CharacterEllipsis"
                                                    Foreground="{Binding IsPinned, Converter={StaticResource PinNameBrush}}" />
 
-                                        <!-- Status / pin pill. -->
+                                        <!-- Status / pin pill. MultiBinding so it refreshes when Validate-all updates Status. -->
                                         <Border Grid.Column="2" Margin="10,0" Padding="8,2" CornerRadius="9"
                                                 Background="{StaticResource InputBrush}" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding Converter={StaticResource PillText}}"
-                                                       FontSize="11"
-                                                       Foreground="{Binding Converter={StaticResource PillBrush}}" />
+                                            <TextBlock FontSize="11">
+                                                <TextBlock.Text>
+                                                    <MultiBinding Converter="{StaticResource PillText}">
+                                                        <Binding Path="IsPinned" />
+                                                        <Binding Path="Status" />
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                                <TextBlock.Foreground>
+                                                    <MultiBinding Converter="{StaticResource PillBrush}">
+                                                        <Binding Path="IsPinned" />
+                                                        <Binding Path="Status" />
+                                                    </MultiBinding>
+                                                </TextBlock.Foreground>
+                                            </TextBlock>
                                         </Border>
 
                                         <!-- Friendly creation time, right-aligned and muted. -->

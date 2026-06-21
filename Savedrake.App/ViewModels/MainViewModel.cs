@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -10,15 +11,18 @@ using CommunityToolkit.Mvvm.Input;
 namespace Savedrake.App.ViewModels
 {
     // One row in the Backups list. Mirrors the WinForms LoadBackupHistory columns (file name, friendly time,
-    // integrity status) plus the pin state, with the full path kept for Restore/Delete. Plain DTO — the list is
-    // rebuilt wholesale by RefreshBackups, so no per-row change notification is needed.
-    public sealed class BackupRow
+    // integrity status) plus the pin state, with the full path kept for Restore/Delete. Status is observable so
+    // "Validate all" can upgrade each row's integrity in place (Protected/Legacy -> Validated/Legacy/Corrupt/Missing)
+    // without rebuilding the list; the other fields are set once at creation (rename/pin rebuild the list).
+    public partial class BackupRow : ObservableObject
     {
         public string FileName { get; set; }
         public string FriendlyTime { get; set; }
-        public string Status { get; set; }   // "Protected" (has manifest) or "Legacy"
         public bool IsPinned { get; set; }
         public string FullPath { get; set; }
+
+        [ObservableProperty]
+        private string status;   // "Protected"/"Legacy" at load; "Validated"/"Corrupt"/"Missing" after Validate all
     }
 
     // The main workflow view model. Drives the Folders + Autobackup + Backups cards and routes the Backup / Restore /
@@ -78,7 +82,11 @@ namespace Savedrake.App.ViewModels
         public ObservableCollection<BackupRow> Backups { get; } = new ObservableCollection<BackupRow>();
 
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(PinMenuLabel))]
         private BackupRow selectedBackup;
+
+        // Dynamic context-menu label: "Unpin" when the selected backup is pinned, otherwise "Pin".
+        public string PinMenuLabel => (SelectedBackup != null && SelectedBackup.IsPinned) ? "Unpin" : "Pin";
 
         [ObservableProperty]
         private string statusText = "Ready.";
@@ -544,38 +552,142 @@ namespace Savedrake.App.ViewModels
             RefreshBackups();
         }
 
+        // Send the selected backup(s) to the Recycle Bin (recoverable), supporting multi-select. The selection is
+        // passed from the ListView so the toolbar button, the context menu, and the Delete key all act on the same set.
         [RelayCommand]
-        private void Delete()
+        private void Delete(System.Collections.IList selected)
         {
-            if (SelectedBackup == null)
-            {
-                _dialog.Warn("Delete", "Please select a backup to delete first.");
-                return;
-            }
+            // Snapshot the selection now (the live SelectedItems collection mutates as the list rebuilds below).
+            List<BackupRow> rows = (selected != null ? selected.Cast<BackupRow>()
+                                    : (SelectedBackup != null ? new[] { SelectedBackup } : Enumerable.Empty<BackupRow>()))
+                                   .Where(r => r != null).ToList();
+            if (rows.Count == 0) { _dialog.Warn("Delete", "Please select one or more backups to delete first."); return; }
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
-            BackupRow row = SelectedBackup;
-
             // Hold the operation lock across the whole delete, including the confirm dialog. The modal pumps the
-            // Dispatcher queue, so without the lock a queued autobackup tick could fire and rebuild the list (nulling
-            // SelectedBackup) mid-delete.
+            // Dispatcher queue, so without the lock a queued autobackup tick could rebuild the list mid-delete.
             _isOperationInProgress = true;
             try
             {
-                if (!_dialog.Confirm("Delete Backup", "Delete this backup permanently?\n\n" + row.FileName))
+                string plural = rows.Count > 1 ? "s" : "";
+                if (!_dialog.Confirm("Delete Backup" + plural,
+                        "Send the selected backup" + plural + " to the Recycle Bin?\n\n" +
+                        string.Join("\n", rows.Select(r => r.FileName))))
                     return;
-                try
+
+                int deleted = 0;
+                foreach (BackupRow row in rows)
                 {
-                    File.Delete(row.FullPath);
-                    _status.Set("Backup deleted.");
+                    try
+                    {
+                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(row.FullPath,
+                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                        deleted++;
+                    }
+                    catch (Exception ex)
+                    {
+                        _dialog.Error("Delete Failed", "Could not delete " + row.FileName + ": " + ex.Message);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _dialog.Error("Delete Failed", "Could not delete the backup: " + ex.Message);
-                }
+                _status.Set(deleted == 1 ? "Backup sent to the Recycle Bin." : (deleted + " backups sent to the Recycle Bin."));
             }
             finally { _isOperationInProgress = false; }
             RefreshBackups();
+        }
+
+        // Rename the selected backup on disk (keeps the .zip extension; renaming a pinned backup drops the pin, matching
+        // the shipped app). Single-select only.
+        [RelayCommand]
+        private void Rename()
+        {
+            BackupRow row = SelectedBackup;
+            if (row == null) { _dialog.Warn("Rename", "Please select one backup to rename first."); return; }
+            if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
+
+            string ext = Path.GetExtension(row.FileName);
+            string input = Microsoft.VisualBasic.Interaction.InputBox(
+                "Enter a new name for this backup:", "Rename Backup", Path.GetFileNameWithoutExtension(row.FileName));
+            if (string.IsNullOrWhiteSpace(input)) return; // cancelled / empty
+
+            string newName = Path.GetFileNameWithoutExtension(input.Trim()) + ext;
+            if (string.Equals(newName, row.FileName, StringComparison.Ordinal)) return;
+
+            _isOperationInProgress = true;
+            try
+            {
+                string target = BackupNaming.MakeUniquePath(Path.Combine(Path.GetDirectoryName(row.FullPath), newName));
+                File.Move(row.FullPath, target);
+                _status.Set("Backup renamed.");
+            }
+            catch (Exception ex) { _dialog.Error("Rename Failed", "Could not rename the backup: " + ex.Message); }
+            finally { _isOperationInProgress = false; }
+            RefreshBackups();
+        }
+
+        // Toggle the selected backup's pinned state (a " [PINNED]" filename token). Pinned backups are protected from
+        // automatic cleanup and excluded from the autobackup limit. Single-select only.
+        [RelayCommand]
+        private void Pin()
+        {
+            BackupRow row = SelectedBackup;
+            if (row == null) { _dialog.Warn("Pin backup", "Select one backup to pin or unpin."); return; }
+            if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
+
+            _isOperationInProgress = true;
+            try
+            {
+                if (!File.Exists(row.FullPath)) return;
+                bool pinned = Pinning.IsPinnedBackup(Path.GetFileName(row.FullPath));
+                string target = pinned ? Pinning.UnpinnedPath(row.FullPath) : Pinning.PinnedPath(row.FullPath);
+                if (!string.Equals(target, row.FullPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    target = BackupNaming.MakeUniquePath(target); // never clobber an existing backup
+                    File.Move(row.FullPath, target);
+                }
+                _status.Set(pinned ? "Backup unpinned." : "Backup pinned. It won't be removed by automatic cleanup.");
+            }
+            catch (Exception ex) { _dialog.Error("Pin backup", "Could not change the pinned state: " + ex.Message); }
+            finally { _isOperationInProgress = false; }
+            RefreshBackups();
+        }
+
+        // Full integrity check of every backup: each row's Status is upgraded in place to Validated / Legacy / Corrupt
+        // / Missing (the pill recolours live), with a tally and a warning if any failed.
+        [RelayCommand]
+        private void ValidateAll()
+        {
+            if (Backups.Count == 0) { _dialog.Info("Validate Backups", "There are no backups to validate."); return; }
+
+            _status.Set("Validating backups...");
+            int validated = 0, legacy = 0, failed = 0;
+            System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+            try
+            {
+                foreach (BackupRow row in Backups)
+                {
+                    string state = File.Exists(row.FullPath) ? Manifest.ClassifyBackupFully(row.FullPath) : "Missing";
+                    row.Status = state;
+                    if (state == "Validated") validated++;
+                    else if (state == "Legacy") legacy++;
+                    else failed++;
+                }
+            }
+            finally { System.Windows.Input.Mouse.OverrideCursor = null; }
+
+            _status.Set("Validated " + Backups.Count + " backups: " + validated + " OK, " + legacy + " legacy, " + failed + " failed.");
+            if (failed > 0)
+                _dialog.Warn("Validation", failed + " backup(s) failed validation and may not be restorable.");
+        }
+
+        // Open the backup zip in the default handler (double-click on a row).
+        [RelayCommand]
+        private void OpenBackup(BackupRow row)
+        {
+            row = row ?? SelectedBackup;
+            if (row == null || string.IsNullOrEmpty(row.FullPath)) return;
+            try { System.Diagnostics.Process.Start(row.FullPath); }
+            catch (Exception ex) { _dialog.Error("Open Backup", "Could not open the backup: " + ex.Message); }
         }
 
         public void Dispose() => _autobackup?.Dispose();
