@@ -166,16 +166,19 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="MenuItem">
-                    <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="5" Padding="10,0"
+                    <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="5" Padding="8,0"
                             SnapsToDevicePixels="True">
                         <Grid VerticalAlignment="Center" MinWidth="120">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="18" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <ContentPresenter Grid.Column="0" ContentSource="Header" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" x:Name="check" Text="&#x2713;" FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{StaticResource AccentGoldBrush}" Visibility="Hidden" />
+                            <ContentPresenter Grid.Column="1" ContentSource="Header" VerticalAlignment="Center"
                                               RecognizesAccessKey="True" />
-                            <TextBlock Grid.Column="1" x:Name="arrow" Text="4" FontFamily="Marlett" FontSize="11"
+                            <TextBlock Grid.Column="2" x:Name="arrow" Text="4" FontFamily="Marlett" FontSize="11"
                                        Margin="14,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
                                        Foreground="{StaticResource TextSecondaryBrush}" />
                             <Popup x:Name="PART_Popup" Placement="Right" IsOpen="{TemplateBinding IsSubmenuOpen}"
@@ -188,6 +191,9 @@
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="check" Property="Visibility" Value="Visible" />
+                        </Trigger>
                         <Trigger Property="Role" Value="SubmenuHeader">
                             <Setter TargetName="arrow" Property="Visibility" Value="Visible" />
                         </Trigger>

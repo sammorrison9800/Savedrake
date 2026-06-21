@@ -27,13 +27,21 @@ namespace Savedrake.App
         [DllImport("dwmapi.dll", PreserveSig = true)]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
+        // The system-tray icon (WinForms NotifyIcon; UseWindowsForms is on). Only visible while minimized-to-tray.
+        private System.Windows.Forms.NotifyIcon _tray;
+
         public MainWindow()
         {
             InitializeComponent();
             DataContext = new Savedrake.App.ViewModels.MainViewModel();
             // Start the autobackup engine (WMI watcher) and re-engage a saved-on autobackup only once the window is
-            // loaded, so any limit/invalid dialog from the immediate game-start backup has a real owner window.
-            Loaded += (s, e) => (DataContext as Savedrake.App.ViewModels.MainViewModel)?.Activate();
+            // loaded, so any limit/invalid dialog from the immediate game-start backup has a real owner window. The
+            // tray icon is created here too (after the window exists).
+            Loaded += (s, e) =>
+            {
+                InitTray();
+                (DataContext as Savedrake.App.ViewModels.MainViewModel)?.Activate();
+            };
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -42,10 +50,53 @@ namespace Savedrake.App
             ApplyDwmTheming();
         }
 
-        // Tear down the view model on close so the autobackup engine's WMI game watcher, timers, and file-system
-        // watcher are stopped and disposed rather than lingering past the window.
+        // Build the tray icon + its Show/Quit menu. Hidden until the window is minimized with "minimize to tray" on.
+        private void InitTray()
+        {
+            _tray = new System.Windows.Forms.NotifyIcon { Text = "Savedrake", Visible = false };
+            try
+            {
+                var res = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/savedrake.ico"));
+                if (res != null) using (var stream = res.Stream) _tray.Icon = new System.Drawing.Icon(stream);
+            }
+            catch { /* no icon -> NotifyIcon just won't show; non-fatal */ }
+
+            var menu = new System.Windows.Forms.ContextMenuStrip();
+            menu.Items.Add("Show", null, (s, e) => RestoreFromTray());
+            menu.Items.Add("Quit", null, (s, e) => { if (_tray != null) _tray.Visible = false; System.Windows.Application.Current?.Shutdown(); });
+            _tray.ContextMenuStrip = menu;
+            _tray.DoubleClick += (s, e) => RestoreFromTray();
+        }
+
+        // Bring the window back from the tray.
+        private void RestoreFromTray()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            if (_tray != null) _tray.Visible = false;
+        }
+
+        // When the user minimizes and "minimize to tray" is on, hide the window and show the tray icon instead.
+        protected override void OnStateChanged(EventArgs e)
+        {
+            base.OnStateChanged(e);
+            if (WindowState == WindowState.Minimized
+                && _tray != null
+                && DataContext is Savedrake.App.ViewModels.MainViewModel vm && vm.MinimizeToTray)
+            {
+                Hide();
+                _tray.Visible = true;
+                try { _tray.ShowBalloonTip(800, "Savedrake", "Savedrake is minimized to the system tray.", System.Windows.Forms.ToolTipIcon.Info); }
+                catch { }
+            }
+        }
+
+        // Tear down the tray icon and the view model on close so the autobackup engine's WMI game watcher, timers,
+        // and file-system watcher are stopped and disposed rather than lingering past the window.
         protected override void OnClosed(EventArgs e)
         {
+            try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; } } catch { }
             (DataContext as IDisposable)?.Dispose();
             base.OnClosed(e);
         }

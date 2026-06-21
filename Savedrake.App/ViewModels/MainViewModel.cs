@@ -71,6 +71,10 @@ namespace Savedrake.App.ViewModels
         [ObservableProperty]
         private bool backupOnSaveEnabled;
 
+        // When on, minimizing hides the window to the system tray instead of the taskbar (persisted as CheckboxTray).
+        [ObservableProperty]
+        private bool minimizeToTray;
+
         // Preset intervals offered in the editable interval box (the box also accepts free text like "12 minutes").
         public ObservableCollection<string> IntervalOptions { get; } =
             new ObservableCollection<string> { "5 minutes", "15 minutes", "30 minutes", "1 hour", "2 hours" };
@@ -208,6 +212,7 @@ namespace Savedrake.App.ViewModels
                 CleanupEnabled = ParseBool(root.Element("AutoCleanupOldBackups"));
                 RecycleEnabled = CleanupEnabled && ParseBool(root.Element("RemovedToRecycleBin"));
                 BackupOnSaveEnabled = ParseBool(root.Element("BackupOnSaveChange"));
+                MinimizeToTray = ParseBool(root.Element("CheckboxTray"));
                 AutobackupEnabled = ParseBool(root.Element("CheckboxAuto"));
             }
             catch { /* best-effort: defaults stand */ }
@@ -248,6 +253,7 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "AutoCleanupOldBackups", CleanupEnabled.ToString());
                 SetElement(root, "RemovedToRecycleBin", RecycleEnabled.ToString());
                 SetElement(root, "BackupOnSaveChange", BackupOnSaveEnabled.ToString());
+                SetElement(root, "CheckboxTray", MinimizeToTray.ToString());
                 SetIntervalElements(root);
 
                 doc.Save(SettingsFilePath);
@@ -362,6 +368,12 @@ namespace Savedrake.App.ViewModels
             if (!_loaded) return;
             SaveSettings();
             _autobackup.OnBackupOnSaveChanged();
+        }
+
+        partial void OnMinimizeToTrayChanged(bool value)
+        {
+            if (!_loaded) return;
+            SaveSettings();
         }
 
         // Directory + interval + limit validity for enabling autobackup. silent = startup re-engage (no prompts).
