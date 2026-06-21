@@ -297,44 +297,56 @@
                         <CheckBox Content="Back up automatically while Dragon's Dogma 2 is running"
                                   IsChecked="{Binding AutobackupEnabled}" Margin="0,2,0,0" />
 
-                        <!-- Interval + limit. Locked while autobackup is on (matches the shipped app). -->
-                        <Grid Margin="26,12,0,0" IsEnabled="{Binding ConfigEditable}">
+                        <!-- WHEN to back up: the triggers, grouped. The interval is the always-on crash safety net;
+                             on-save and on-close are opt-in extras. Inputs lock while autobackup is on. -->
+                        <TextBlock Text="When to back up" Margin="26,14,0,0" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Grid Margin="26,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="26" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Back up every" VerticalAlignment="Center" Margin="0,0,8,0"
+                            <TextBlock Grid.Column="0" Text="Every" VerticalAlignment="Center" Margin="0,0,8,0"
                                        FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Grid.Column="1" Width="120" Text="{Binding IntervalText}"
                                      VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
                                      Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
                                      BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                            <TextBlock Grid.Column="3" Text="Keep at most" VerticalAlignment="Center" Margin="0,0,8,0"
+                            <TextBlock Grid.Column="2" Text="(a safety net in case the game crashes mid-session)"
+                                       VerticalAlignment="Center" Margin="10,0,0,0" FontSize="11"
+                                       Foreground="{DynamicResource TextHintBrush}" />
+                        </Grid>
+                        <TextBlock Margin="26,4,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
+                                   Text="Examples: 5 minutes, 30 minutes, 1 hour, 2 hours (minimum 5 minutes)." />
+                        <CheckBox Content="The instant the game saves"
+                                  IsChecked="{Binding BackupOnSaveEnabled}" Margin="26,10,0,0" />
+                        <CheckBox Content="When I close the game"
+                                  IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="26,8,0,0" />
+
+                        <!-- HOW MANY to keep: retention. -->
+                        <TextBlock Text="How many to keep" Margin="26,16,0,0" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Grid Margin="26,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Keep at most" VerticalAlignment="Center" Margin="0,0,8,0"
                                        FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBox Grid.Column="4" Width="56" Text="{Binding MaxBackupsText}"
+                            <TextBox Grid.Column="1" Width="56" Text="{Binding MaxBackupsText}"
                                      VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
                                      Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
                                      BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                            <TextBlock Grid.Column="5" Text="backups" VerticalAlignment="Center" Margin="8,0,0,0"
+                            <TextBlock Grid.Column="2" Text="backups" VerticalAlignment="Center" Margin="8,0,0,0"
                                        FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </Grid>
-                        <TextBlock Margin="26,6,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
-                                   Text="Examples: 5 minutes, 30 minutes, 1 hour, 2 hours (minimum 5 minutes)." />
-
-                        <!-- Options -->
                         <CheckBox Content="Remove the oldest autobackups once the limit is reached"
-                                  IsChecked="{Binding CleanupEnabled}" Margin="0,16,0,0" />
+                                  IsChecked="{Binding CleanupEnabled}" Margin="26,10,0,0" />
                         <CheckBox Content="Send removed autobackups to the Recycle Bin"
                                   IsChecked="{Binding RecycleEnabled}" IsEnabled="{Binding CleanupEnabled}"
-                                  Margin="26,8,0,0" />
-                        <CheckBox Content="Also back up the instant the game saves"
-                                  IsChecked="{Binding BackupOnSaveEnabled}" Margin="0,12,0,0" />
-                        <CheckBox Content="Back up once more when I close the game"
-                                  IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="0,8,0,0" />
+                                  Margin="52,8,0,0" />
                     </StackPanel>
                 </StackPanel>
             </Border>
