@@ -1065,6 +1065,9 @@ namespace Savedrake.App.ViewModels
                 foreach (string d in dirs)
                 {
                     string nm = Path.GetFileName(d);
+                    // Skip a subfolder whose name we couldn't switch to anyway (e.g. an externally-created folder
+                    // longer than the 40-char limit), so the menu never shows a row that does nothing when clicked.
+                    if (!CharacterFolder.IsValidName(nm)) continue;
                     int n = 0; try { n = Directory.GetFiles(d, "*.zip").Length; } catch { }
                     list.Add((nm, n));
                 }
