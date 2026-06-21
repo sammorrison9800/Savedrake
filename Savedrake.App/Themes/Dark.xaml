@@ -77,6 +77,44 @@
         <Setter Property="Margin" Value="0,0,0,8" />
     </Style>
 
+    <!-- Clickable card heading that folds the card body. Flat and transparent so it reads as the section title, with a
+         faint hover so it's discoverably clickable. Left-aligned, full-width; negative margins cancel the button's own
+         padding so the title sits exactly where a plain SectionTitle would. -->
+    <Style x:Key="CardHeaderToggle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="4,3" />
+        <Setter Property="Margin" Value="-4,-3,-4,5" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource CardAltBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- The fold caret (▾ open / ▸ closed) to the left of a collapsible card title. -->
+    <Style x:Key="SectionCaret" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AccentGoldBrush}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Width" Value="14" />
+        <Setter Property="TextAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
     <!-- Faint placeholder line for the empty card bodies in this shell. -->
     <Style x:Key="CardPlaceholder" TargetType="TextBlock">
         <Setter Property="FontSize" Value="13" />
