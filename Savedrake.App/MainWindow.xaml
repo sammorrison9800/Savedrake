@@ -72,8 +72,38 @@
                 <!-- Right-side controls: clickable (opt out of caption drag). -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Button Content="File" Style="{StaticResource HeaderMenuButton}" />
-                    <Button Content="Help" Style="{StaticResource HeaderMenuButton}" Margin="2,0,8,0" />
+                    <Button Content="File" Style="{StaticResource HeaderMenuButton}" Click="HeaderMenu_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Detect save folder"
+                                          Command="{Binding PlacementTarget.DataContext.DetectSaveFolderCommand,
+                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Undo last restore"
+                                          Command="{Binding PlacementTarget.DataContext.UndoLastRestoreCommand,
+                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Exit"
+                                          Command="{Binding PlacementTarget.DataContext.ExitCommand,
+                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                    <Button Content="Help" Style="{StaticResource HeaderMenuButton}" Margin="2,0,8,0" Click="HeaderMenu_Click">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="FAQ"
+                                          Command="{Binding PlacementTarget.DataContext.OpenFaqCommand,
+                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="About"
+                                          Command="{Binding PlacementTarget.DataContext.OpenAboutCommand,
+                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Open log folder"
+                                          Command="{Binding PlacementTarget.DataContext.OpenLogFolderCommand,
+                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                     <Button x:Name="MinimizeButton" Content="&#x2014;" Style="{StaticResource CaptionButton}"
                             ToolTip="Minimize" Click="MinimizeButton_Click" />
                     <Button x:Name="CloseButton" Content="&#x2715;" Style="{StaticResource CaptionCloseButton}"
