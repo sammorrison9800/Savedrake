@@ -75,6 +75,17 @@ namespace Savedrake.App.ViewModels
         [ObservableProperty]
         private bool minimizeToTray;
 
+        // Backup file-name format: randomly generated (default) vs time-stamped (persisted as BackupFileName1/2).
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(UseTimestampName))]
+        private bool useRandomName = true;
+
+        public bool UseTimestampName => !UseRandomName;
+
+        // Last window size, restored on next launch (persisted as WindowWidth/WindowHeight). 0 = use the default.
+        public int WindowWidth { get; private set; }
+        public int WindowHeight { get; private set; }
+
         // Preset intervals offered in the editable interval box (the box also accepts free text like "12 minutes").
         public ObservableCollection<string> IntervalOptions { get; } =
             new ObservableCollection<string> { "5 minutes", "15 minutes", "30 minutes", "1 hour", "2 hours" };
@@ -154,7 +165,7 @@ namespace Savedrake.App.ViewModels
             try
             {
                 BackupResult r = BackupService.Backup(
-                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = true, RandomName = true },
+                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = true, RandomName = UseRandomName },
                     _dialog, _status);
                 if (r.Ok) _sound.Success(); else _sound.Error();
                 return r.Ok;
@@ -180,6 +191,8 @@ namespace Savedrake.App.ViewModels
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Savedrake");
 
         private static string SettingsFilePath => Path.Combine(AppDataDir, "savedrake_settings.xml");
+        private static string VersionFilePath => Path.Combine(AppDataDir, "version.txt");
+        private static string UpdaterXmlPath => Path.Combine(AppDataDir, "savedrake-updater.xml");
 
         // Read the folders + autobackup settings from the WinForms settings file if present. Read-only, dependency-free
         // (a small hand-rolled XML read), and never throws — missing/garbled settings just leave defaults in place.
@@ -213,6 +226,9 @@ namespace Savedrake.App.ViewModels
                 RecycleEnabled = CleanupEnabled && ParseBool(root.Element("RemovedToRecycleBin"));
                 BackupOnSaveEnabled = ParseBool(root.Element("BackupOnSaveChange"));
                 MinimizeToTray = ParseBool(root.Element("CheckboxTray"));
+                UseRandomName = !ParseBool(root.Element("BackupFileName2")); // BackupFileName2 = time-stamped; default random
+                WindowWidth = ParseIntOr(root.Element("WindowWidth"), 0);
+                WindowHeight = ParseIntOr(root.Element("WindowHeight"), 0);
 
                 // Backup hotkey (nested <Hotkey> block + CheckboxHot), shared with the WinForms shape.
                 var hk = root.Element("Hotkey");
@@ -267,6 +283,10 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "RemovedToRecycleBin", RecycleEnabled.ToString());
                 SetElement(root, "BackupOnSaveChange", BackupOnSaveEnabled.ToString());
                 SetElement(root, "CheckboxTray", MinimizeToTray.ToString());
+                SetElement(root, "BackupFileName1", UseRandomName.ToString());
+                SetElement(root, "BackupFileName2", (!UseRandomName).ToString());
+                if (WindowWidth > 0) SetElement(root, "WindowWidth", WindowWidth.ToString());
+                if (WindowHeight > 0) SetElement(root, "WindowHeight", WindowHeight.ToString());
 
                 // Backup hotkey (nested <Hotkey> block + CheckboxHot + the display string in Textbox3).
                 var hk = root.Element("Hotkey");
@@ -555,7 +575,7 @@ namespace Savedrake.App.ViewModels
             try
             {
                 BackupResult r = BackupService.Backup(
-                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = false, RandomName = true },
+                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = false, RandomName = UseRandomName },
                     _dialog, _status);
                 if (r.Ok) _sound.Success(); else _sound.Error();
             }
@@ -749,6 +769,37 @@ namespace Savedrake.App.ViewModels
             if (HotkeyAlt) sb.Append("Alt + ");
             sb.Append(VkToKeyName(HotkeyVk));
             return sb.ToString();
+        }
+
+        // ----- backup name format / window size / reset -----
+
+        partial void OnUseRandomNameChanged(bool value) { if (_loaded) SaveSettings(); }
+
+        [RelayCommand] private void NameFormatRandom() => UseRandomName = true;
+        [RelayCommand] private void NameFormatTimestamp() => UseRandomName = false;
+
+        // Persist the window size (called by the window on close so the next launch restores it).
+        public void SaveWindowSize(int width, int height)
+        {
+            if (width > 0) WindowWidth = width;
+            if (height > 0) WindowHeight = height;
+            SaveSettings();
+        }
+
+        // Reset: stop the autobackup engine and delete the persisted state files; returns true if all were removed.
+        // The caller then disposes the tray and Environment.Exit(0)s so nothing re-creates them. Disposing the
+        // controller (rather than toggling AutobackupEnabled) avoids a SaveSettings that would re-create the file we
+        // just deleted.
+        public bool ResetState()
+        {
+            try { _autobackup?.Dispose(); } catch { }
+            bool allDeleted = true;
+            foreach (string path in new[] { SettingsFilePath, CountFilePath, VersionFilePath, UpdaterXmlPath })
+            {
+                try { if (File.Exists(path)) File.Delete(path); }
+                catch { allDeleted = false; }
+            }
+            return allDeleted;
         }
 
         // Send the selected backup(s) to the Recycle Bin (recoverable), supporting multi-select. The selection is
