@@ -87,6 +87,11 @@
                     </StackPanel>
                 </Button>
 
+                <!-- "Playing: X" hint, shown only while you're viewing a different character than the one that's live.
+                     Empty string renders as nothing (no converter needed). Sits in the draggable spacer column. -->
+                <TextBlock Grid.Column="3" Text="{Binding PlayingIndicator}" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center" Margin="12,0,0,0" />
+
                 <!-- Right-side controls: clickable (opt out of caption drag). -->
                 <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True">
@@ -354,6 +359,9 @@
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
                                     Padding="14,7" Command="{Binding BackupCommand}" />
+                            <Button Content="Load into game" Style="{StaticResource PrimaryButton}"
+                                    Padding="14,7" Margin="8,0,0,0" Command="{Binding LoadIntoGameCommand}"
+                                    ToolTip="Replace your live DD2 save with this character's newest backup (your current character is backed up first)" />
                             <Button Content="Restore" Style="{StaticResource OutlineButton}"
                                     Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}"
                                     CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />

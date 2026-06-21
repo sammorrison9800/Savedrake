@@ -105,6 +105,11 @@ namespace RestoreHarness
                 Test_UpdateCheck();   // Phase 6i: update version parsing (strip v, 2-4 numeric parts) + comparison
                 Test_CharacterFolder();   // Characters: safe single-segment folder-name validation + SafeName clamp
                 Test_CharacterMigration();   // Characters: non-destructive, idempotent, resumable loose->Default migration
+                Test_LiveFolderHasRealSave();   // Load: detect real DD2 save data in the live folder (fail-open)
+                Test_FindLatestRealBackup();   // Load: newest real backup by CreationTime, excluding (Pre-Restore)/(Pre-Load)
+                Test_PreLoadCheckpoint();   // Load: (Pre-Load) snapshot naming + content + skip rules
+                Test_LoadSequence_Happy();   // Load: snapshot-outgoing then restore-target end-to-end; live becomes target
+                Test_LoadSequence_Cancelled();   // Load: declined restore leaves live untouched -> no flip (the no-limbo proof)
             }
             catch (Exception ex)
             {
@@ -1104,6 +1109,149 @@ namespace RestoreHarness
                 Check("empty/null: NeedsMigration false",
                     !CharacterMigration.NeedsMigration("") && !CharacterMigration.NeedsMigration(null));
             }
+            Console.WriteLine();
+        }
+
+        static void Test_LiveFolderHasRealSave()
+        {
+            Console.WriteLine("== load: live-folder save detection ==");
+            string withSave = NewDir("lhrs_yes");
+            Directory.CreateDirectory(Path.Combine(withSave, "win64_save"));
+            File.WriteAllText(Path.Combine(withSave, "win64_save", "data000.bin"), "x");
+            Check("has data*.bin (nested) -> true", SaveScan.LiveFolderHasRealSave(withSave));
+
+            string sysOnly = NewDir("lhrs_sys");
+            File.WriteAllText(Path.Combine(sysOnly, "system.bin"), "x");
+            Check("has system.bin -> true", SaveScan.LiveFolderHasRealSave(sysOnly));
+
+            string noSave = NewDir("lhrs_no");
+            File.WriteAllText(Path.Combine(noSave, "readme.txt"), "x");
+            Check("no save data -> false", !SaveScan.LiveFolderHasRealSave(noSave));
+            Check("missing folder -> false (no throw)", !SaveScan.LiveFolderHasRealSave(Path.Combine(noSave, "nope")));
+            Check("null -> false (no throw)", !SaveScan.LiveFolderHasRealSave(null));
+            Console.WriteLine();
+        }
+
+        static void Test_FindLatestRealBackup()
+        {
+            Console.WriteLine("== load: newest real backup (excludes checkpoints, CreationTime order) ==");
+            string dir = NewDir("flrb");
+            string older = Path.Combine(dir, "backup_old.zip");
+            string newer = Path.Combine(dir, "backup_new.zip");
+            string preR = Path.Combine(dir, "(Pre-Restore) 240101000000.zip");
+            string preL = Path.Combine(dir, "(Pre-Load) 240101000000.zip");
+            foreach (string p in new[] { older, newer, preR, preL }) File.WriteAllText(p, "z");
+            // Make the CHECKPOINTS the newest by CreationTime — they must STILL be excluded.
+            File.SetCreationTimeUtc(older, new DateTime(2024, 1, 1));
+            File.SetCreationTimeUtc(newer, new DateTime(2024, 1, 2));
+            File.SetCreationTimeUtc(preR, new DateTime(2024, 1, 9));
+            File.SetCreationTimeUtc(preL, new DateTime(2024, 1, 9));
+            Check("returns newest real backup, checkpoints excluded even when newer",
+                SaveScan.FindLatestRealBackup(dir) == newer);
+
+            string onlyCheckpoints = NewDir("flrb_ck");
+            File.WriteAllText(Path.Combine(onlyCheckpoints, "(Pre-Restore) 1.zip"), "z");
+            Check("only checkpoints -> null", SaveScan.FindLatestRealBackup(onlyCheckpoints) == null);
+            Check("missing folder -> null (no throw)", SaveScan.FindLatestRealBackup(Path.Combine(dir, "nope")) == null);
+            Console.WriteLine();
+        }
+
+        static void Test_PreLoadCheckpoint()
+        {
+            Console.WriteLine("== load: (Pre-Load) outgoing snapshot ==");
+            string live = NewDir("plc_live");
+            File.WriteAllText(Path.Combine(live, "data000.bin"), "OUTGOING");
+            File.WriteAllText(Path.Combine(live, "system.bin"), "SYS");
+            string target = NewDir("plc_target");
+
+            Check("CreatePreLoadCheckpoint returns true", RestoreEngine.CreatePreLoadCheckpoint(live, target));
+            string[] zips = Directory.GetFiles(target, "*.zip");
+            Check("exactly one zip written", zips.Length == 1, "found " + zips.Length);
+            Check("name starts with (Pre-Load)", zips.Length == 1 && Path.GetFileName(zips[0]).StartsWith("(Pre-Load)"));
+            Check("snapshot is excluded by FindLatestRealBackup", SaveScan.FindLatestRealBackup(target) == null);
+            Check("no .savedrake.tmp left", Directory.GetFiles(target, "*.savedrake.tmp").Length == 0);
+
+            // No save data in live -> justified skip, true, no zip.
+            string emptyLive = NewDir("plc_empty");
+            File.WriteAllText(Path.Combine(emptyLive, "readme.txt"), "x");
+            string target2 = NewDir("plc_target2");
+            Check("no-save-data live -> skip (true, no zip)",
+                RestoreEngine.CreatePreLoadCheckpoint(emptyLive, target2) && Directory.GetFiles(target2, "*.zip").Length == 0);
+            // live == target -> skip, true.
+            Check("live == target -> skip (true)", RestoreEngine.CreatePreLoadCheckpoint(live, live));
+            Console.WriteLine();
+        }
+
+        // Build a real DD2-style live folder + a valid target backup zip + character folders; returns the pieces.
+        static void SetupLoad(out string live, out string loadedFolder, out string activeFolder, out string targetZip)
+        {
+            string remote = NewDir("load_remote");
+            live = Path.Combine(remote, "win64_save");
+            Directory.CreateDirectory(live);
+            File.WriteAllText(Path.Combine(live, "data000.bin"), "OLD-DATA");   // outgoing character A's live save
+            File.WriteAllText(Path.Combine(live, "system.bin"), "OLD-SYS");
+
+            loadedFolder = NewDir("load_A");   // character A (currently loaded) backup folder
+            activeFolder = NewDir("load_B");   // character B (being loaded) backup folder
+
+            string src = NewDir("load_src");
+            File.WriteAllText(Path.Combine(src, "data000.bin"), "NEW-DATA");
+            File.WriteAllText(Path.Combine(src, "system.bin"), "NEW-SYS");
+            string manifest = (string)CM("Manifest", "BuildBackupManifest").Invoke(null, new object[] { src });
+            targetZip = Path.Combine(activeFolder, "newsave.zip");
+            MakeZip(targetZip, z =>
+            {
+                z.AddEntry("data000.bin", B("NEW-DATA"));
+                z.AddEntry("system.bin", B("NEW-SYS"));
+                z.AddEntry("_savedrake/manifest.json", B(manifest));
+            });
+        }
+
+        static void Test_LoadSequence_Happy()
+        {
+            Console.WriteLine("== load: full sequence (snapshot outgoing, restore target) ==");
+            SetupLoad(out string live, out string loadedFolder, out string activeFolder, out string targetZip);
+
+            // Step 1: snapshot the outgoing (A) live save into A's folder.
+            bool snapped = RestoreEngine.CreatePreLoadCheckpoint(live, loadedFolder);
+            Check("step 1: outgoing snapshot ok", snapped);
+            Check("step 1: (Pre-Load) of OLD save in loaded folder",
+                Directory.GetFiles(loadedFolder, "(Pre-Load)*.zip").Length == 1);
+
+            // Step 2: restore B's newest into the live folder (the exact call DoRestoreCore makes).
+            var dialog = new StubDialog { ConfirmResult = true };
+            RestoreResult res = RestoreService.Restore(
+                new RestoreRequest { BackupZipPath = targetZip, LiveSaveDir = live, BackupDir = activeFolder, GameRunning = false },
+                dialog, new StubStatus());
+
+            Check("step 2: restore Ok", res.Ok, "msg=" + res.Message);
+            Check("step 3: live now holds NEW (B) data",
+                File.ReadAllText(Path.Combine(live, "data000.bin")) == "NEW-DATA");
+            Check("(Pre-Restore) checkpoint of OLD save landed in active (B) folder",
+                Directory.GetFiles(activeFolder, "(Pre-Restore)*.zip").Length == 1);
+            Console.WriteLine();
+        }
+
+        static void Test_LoadSequence_Cancelled()
+        {
+            Console.WriteLine("== load: declined restore -> live untouched, no flip (no-limbo proof) ==");
+            SetupLoad(out string live, out string loadedFolder, out string activeFolder, out string targetZip);
+
+            // Step 1 still runs (silent snapshot).
+            RestoreEngine.CreatePreLoadCheckpoint(live, loadedFolder);
+
+            // Step 2: user declines the Steam-Cloud confirm.
+            var dialog = new StubDialog { ConfirmResult = false };
+            RestoreResult res = RestoreService.Restore(
+                new RestoreRequest { BackupZipPath = targetZip, LiveSaveDir = live, BackupDir = activeFolder, GameRunning = false },
+                dialog, new StubStatus());
+
+            Check("declined: result not Ok", !res.Ok);
+            Check("declined: live save UNCHANGED (still OLD)",
+                File.ReadAllText(Path.Combine(live, "data000.bin")) == "OLD-DATA");
+            // The command flips LoadedCharacter only on res.Ok, so here it would NOT flip -> Loaded stays the outgoing
+            // character, which still matches the (unchanged) live save. No limbo.
+            Check("declined: flip-gate is false (LoadedCharacter would stay outgoing)", res.Ok == false);
             Console.WriteLine();
         }
 

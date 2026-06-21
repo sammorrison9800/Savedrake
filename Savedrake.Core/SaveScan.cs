@@ -106,6 +106,41 @@ namespace Savedrake
             catch { return null; }
         }
 
+        // True if the live save folder currently holds real DD2 save data (data*.bin / system.bin), searched
+        // recursively. Fail-OPEN: an unreadable folder returns false (never blocks a load; the (Pre-Load) snapshot
+        // path applies its own fail-CLOSED skip). Never throws.
+        public static bool LiveFolderHasRealSave(string liveDir)
+        {
+            if (string.IsNullOrWhiteSpace(liveDir)) return false;
+            try
+            {
+                return Directory.EnumerateFiles(liveDir, "*", SearchOption.AllDirectories)
+                    .Any(p => IsRealSaveEntry(Path.GetFileName(p)));
+            }
+            catch { return false; }
+        }
+
+        // The newest REAL backup zip in a character's folder, by CreationTime (matching RefreshBackups' "newest
+        // first"), EXCLUDING (Pre-Restore) and (Pre-Load) snapshots so a load never targets its own safety checkpoint
+        // (a checkpoint's CreationTime is "now", so it would otherwise win). Null when the folder is missing/empty or
+        // holds only checkpoints. Never throws.
+        public static string FindLatestRealBackup(string backupDir)
+        {
+            try
+            {
+                return Directory.GetFiles(backupDir, "*.zip")
+                    .Where(f =>
+                    {
+                        string n = Path.GetFileName(f);
+                        return !n.StartsWith("(Pre-Restore)", StringComparison.OrdinalIgnoreCase)
+                            && !n.StartsWith("(Pre-Load)", StringComparison.OrdinalIgnoreCase);
+                    })
+                    .OrderByDescending(f => File.GetCreationTimeUtc(f))
+                    .FirstOrDefault();
+            }
+            catch { return null; }
+        }
+
         public static bool IsRealSaveEntry(string entryFileName)
         {
             string leaf = Path.GetFileName(entryFileName.Replace('/', Path.DirectorySeparatorChar));
