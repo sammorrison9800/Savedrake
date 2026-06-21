@@ -71,6 +71,12 @@ namespace Savedrake.App.ViewModels
         [ObservableProperty]
         private bool backupOnSaveEnabled;
 
+        // Take one final backup when DD2 closes (the safest capture moment — the game has released the save file).
+        // Default on: it is the trigger every leading manager uses by default, and it is change-gated so it never
+        // duplicates a state already captured during the session.
+        [ObservableProperty]
+        private bool backupOnGameCloseEnabled = true;
+
         // ----- Collapsible config sections -----
         // The Folders and Autobackup cards fold to just their title so the Backups list (the thing you actually work
         // with) can fill the window. Default expanded so a first run shows everything; the choice is persisted. The
@@ -260,6 +266,7 @@ namespace Savedrake.App.ViewModels
                 CleanupEnabled = ParseBool(root.Element("AutoCleanupOldBackups"));
                 RecycleEnabled = CleanupEnabled && ParseBool(root.Element("RemovedToRecycleBin"));
                 BackupOnSaveEnabled = ParseBool(root.Element("BackupOnSaveChange"));
+                BackupOnGameCloseEnabled = ParseBoolOr(root.Element("BackupOnGameClose"), true);
                 MinimizeToTray = ParseBool(root.Element("CheckboxTray"));
                 UseRandomName = !ParseBool(root.Element("BackupFileName2")); // BackupFileName2 = time-stamped; default random
                 IsLightTheme = string.Equals((string)root.Element("ThemeMode"), "Light", StringComparison.OrdinalIgnoreCase);
@@ -325,6 +332,7 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "AutoCleanupOldBackups", CleanupEnabled.ToString());
                 SetElement(root, "RemovedToRecycleBin", RecycleEnabled.ToString());
                 SetElement(root, "BackupOnSaveChange", BackupOnSaveEnabled.ToString());
+                SetElement(root, "BackupOnGameClose", BackupOnGameCloseEnabled.ToString());
                 SetElement(root, "CheckboxTray", MinimizeToTray.ToString());
                 SetElement(root, "BackupFileName1", UseRandomName.ToString());
                 SetElement(root, "BackupFileName2", (!UseRandomName).ToString());
@@ -468,6 +476,13 @@ namespace Savedrake.App.ViewModels
             if (!_loaded) return;
             SaveSettings();
             _autobackup.OnBackupOnSaveChanged();
+        }
+
+        // No live controller call: this only changes what happens the next time DD2 closes, so persisting is enough.
+        partial void OnBackupOnGameCloseEnabledChanged(bool value)
+        {
+            if (!_loaded) return;
+            SaveSettings();
         }
 
         partial void OnMinimizeToTrayChanged(bool value)
