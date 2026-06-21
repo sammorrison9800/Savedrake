@@ -30,4 +30,9 @@
     <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>
 
+  <!-- System.Net.Http: the GitHub "latest release" query in the update check. Framework assembly on net48. -->
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
 </Project>

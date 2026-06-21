@@ -58,6 +58,8 @@ namespace Savedrake.App
                 InitTray();
                 vm?.Activate();
                 RegisterCurrentHotkey();
+                AppUpdater.WriteVersionFile();        // version-handshake file for the external updater
+                _ = AppUpdater.RunStartupCheckAsync(); // silent unless a newer release exists
             };
         }
 
@@ -248,6 +250,12 @@ namespace Savedrake.App
         {
             if (DataContext is MainViewModel vm && vm.SelectedBackup != null)
                 vm.OpenBackupCommand.Execute(vm.SelectedBackup);
+        }
+
+        // Help > Check for Updates: a manual check that always reports its result.
+        private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            await AppUpdater.RunManualCheckAsync();
         }
 
         // File > Use light/dark theme: swap the palette live, persist, and re-tint the DWM caption.
