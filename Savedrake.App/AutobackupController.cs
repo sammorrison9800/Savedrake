@@ -22,6 +22,7 @@ namespace Savedrake.App
         bool RecycleEnabled { get; }
         bool BackupOnSaveEnabled { get; }
         string CountFilePath { get; }
+        string IntervalDisplay { get; }        // the interval as the user typed it, for status text ("30 minutes")
         bool IsOperationInProgress { get; }    // a manual backup/restore is mid-flight
 
         IDialogService Dialog { get; }
@@ -181,7 +182,7 @@ namespace Savedrake.App
                 RunChangeAwareAutobackup(bypassChangeGate: true);
 
                 if (_host.AutobackupEnabled) // still on (the immediate backup may have hit the limit and disabled it)
-                    _host.Status.Set("Game running. Autobackup is on.");
+                    _host.Status.Set("Game running. Autobackup began every " + _host.IntervalDisplay + ".");
             }
             else
             {
@@ -289,6 +290,7 @@ namespace Savedrake.App
 
         private void StartSaveWatcher()
         {
+            if (_disposed) return; // never resurrect the watcher after shutdown
             if (!_host.BackupOnSaveEnabled) return;
             string dir = _host.SaveDir;
             if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) return;
@@ -346,20 +348,20 @@ namespace Savedrake.App
         // thread and (re)start the debounce, so a burst of writes collapses into one backup once the save has settled.
         private void OnSaveChanged(object sender, FileSystemEventArgs e)
         {
-            if (_suppressSaveWatcher) return;
+            if (_disposed || _suppressSaveWatcher) return;
             try { _dispatcher.BeginInvoke(new Action(RestartQuiesce)); } catch (Exception) { }
         }
 
         private void RestartQuiesce()
         {
             // A marshalled event can land after StopSaveWatcher nulled the timer (shutdown / game exit / toggle off).
-            if (_quiesceTimer == null) return;
+            if (_disposed || _quiesceTimer == null) return;
             try { _quiesceTimer.Stop(); _quiesceTimer.Start(); } catch (Exception) { }
         }
 
         private void OnQuiesceElapsed(object sender, EventArgs e)
         {
-            if (_quiesceTimer == null) return;
+            if (_disposed || _quiesceTimer == null) return;
             try { _quiesceTimer.Stop(); } catch (Exception) { return; }
             if (_suppressSaveWatcher) return;
             if (!_host.AutobackupEnabled) return;
@@ -372,8 +374,9 @@ namespace Savedrake.App
         // interval timer covers anything missed in the meantime.
         private void OnSaveWatcherError(object sender, ErrorEventArgs e)
         {
+            if (_disposed) return;
             Log.Warn("Save watcher error, re-arming: " + (e.GetException() != null ? e.GetException().Message : "unknown"));
-            try { _dispatcher.BeginInvoke(new Action(() => { StopSaveWatcher(); StartSaveWatcher(); })); } catch (Exception) { }
+            try { _dispatcher.BeginInvoke(new Action(() => { if (_disposed) return; StopSaveWatcher(); StartSaveWatcher(); })); } catch (Exception) { }
         }
 
         public void Dispose()

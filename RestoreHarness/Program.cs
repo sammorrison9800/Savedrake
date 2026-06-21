@@ -882,6 +882,31 @@ namespace RestoreHarness
                 fs.Write(B("5"), 0, 1);
                 Check("exclusively-locked file -> 0 (no throw)", AutobackupCountStore.Read(f) == 0);
             }
+
+            // Phase 6b: the critical fix — the count must be WRITTEN, not just read, or the "Keep at most N" limit
+            // never triggers. Write round-trips; CountAutobackups matches the WinForms filter (non-pinned (Auto)/auto
+            // zips only); RecomputeAndWrite makes Read agree with the files on disk.
+            string g = Path.Combine(dir, "count2.txt");
+            AutobackupCountStore.Write(g, 42);
+            Check("Write then Read round-trips", AutobackupCountStore.Read(g) == 42);
+            AutobackupCountStore.Write(null, 1); // must not throw on a null path
+            Check("Write(null) is a no-op (no throw)", true);
+
+            string cdir = NewDir("count_recompute");
+            MakeZip(Path.Combine(cdir, "(Auto) a.zip"), z => z.AddEntry("x", B("1")));
+            MakeZip(Path.Combine(cdir, "(Auto) b.zip"), z => z.AddEntry("x", B("1")));
+            MakeZip(Path.Combine(cdir, "autobackup_240101.zip"), z => z.AddEntry("x", B("1")));   // "auto" prefix counts
+            MakeZip(Path.Combine(cdir, "(Auto) pinned [PINNED].zip"), z => z.AddEntry("x", B("1"))); // pinned excluded
+            MakeZip(Path.Combine(cdir, "ManualBackup.zip"), z => z.AddEntry("x", B("1")));          // manual excluded
+            MakeZip(Path.Combine(cdir, "(Pre-Restore) cp.zip"), z => z.AddEntry("x", B("1")));      // checkpoint excluded
+            Check("CountAutobackups counts only non-pinned (Auto)/auto zips", AutobackupCountStore.CountAutobackups(cdir) == 3,
+                "got " + AutobackupCountStore.CountAutobackups(cdir));
+            Check("CountAutobackups on a missing dir -> 0", AutobackupCountStore.CountAutobackups(Path.Combine(cdir, "nope")) == 0);
+
+            string cf = Path.Combine(cdir, "count_of_autobackups.txt");
+            int written = AutobackupCountStore.RecomputeAndWrite(cdir, cf);
+            Check("RecomputeAndWrite returns the live count", written == 3, "got " + written);
+            Check("RecomputeAndWrite persists so Read agrees with disk", AutobackupCountStore.Read(cf) == 3);
             Console.WriteLine();
         }
 
