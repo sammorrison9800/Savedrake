@@ -16,6 +16,8 @@ namespace Savedrake
         void Info(string title, string message);
         void Warn(string title, string message);
         void Error(string title, string message);
+        // Ask the user for a single line of text. Returns the entered value, or null if they cancelled.
+        string Prompt(string title, string message, string defaultValue);
     }
 
     // The status-line sink. Each Set(...) replaces a `Status.Text = ...` write in the original flow, verbatim.

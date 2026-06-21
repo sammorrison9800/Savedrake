@@ -59,7 +59,6 @@ namespace Savedrake.App
                 InitTray();
                 vm?.Activate();
                 RegisterCurrentHotkey();
-                AppUpdater.WriteVersionFile();        // version-handshake file for the external updater
                 _ = AppUpdater.RunStartupCheckAsync(); // silent unless a newer release exists
             };
         }

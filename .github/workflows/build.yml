@@ -43,6 +43,5 @@ jobs:
           name: savedrake-release
           path: |
             Savedrake.App/bin/Release/**
-            updater/bin/Release/**
           if-no-files-found: warn
           retention-days: 7

@@ -49,11 +49,11 @@ names.
 Right-click a backup in the list to rename or delete it. F2 renames, Del deletes. Deleted backups
 go to the Recycle Bin, and the last deletion can be undone.
 
-## I updated, but the updater still seems old.
+## How do I update Savedrake?
 
-The updater program cannot replace itself while it applies an update, so it stays on the version you
-installed. To get the latest updater, download the release zip and extract it over your install
-once.
+Savedrake checks for new releases and lets you know when one is out (you can also check any time from
+Help > Check for Updates). To update, open the Nexus Mods downloads page, download the latest version,
+and extract it over your install. Your backups and settings are kept.
 
 ## How do I report a bug or request a feature?
 

@@ -25,10 +25,10 @@ disclosing the issue publicly.
 
 ## Scope
 
-Savedrake reads and writes save files, and it can download and install updates from GitHub
-Releases over HTTPS when you choose to update. Reports about the backup and restore flow, or about
-the update flow, are especially welcome.
+Savedrake reads and writes save files. It checks GitHub Releases over HTTPS to see whether a newer
+version exists and, if so, points you to the Nexus Mods downloads page; it does not download or run
+updates itself. Reports about the backup and restore flow are especially welcome.
 
-Known limitation: the updater verifies that a downloaded update is a valid package containing the
-application, but it does not yet verify a cryptographic signature of the package. Signed updates
-are planned. See [ROADMAP.md](ROADMAP.md).
+Known limitation: Savedrake is not yet code-signed, so Windows SmartScreen may warn on first run and
+you cannot yet verify the publisher of a download cryptographically. Signed builds are planned. See
+[ROADMAP.md](ROADMAP.md).
