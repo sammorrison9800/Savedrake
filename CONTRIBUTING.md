@@ -15,8 +15,8 @@ msbuild Savedrake.sln -t:Build -p:Configuration=Release
 
 The solution has three projects:
 
-- the app (`Savedrake v1.2.3`),
-- the updater (`updater`),
+- the WPF app (`Savedrake.App`, built as `Savedrake.exe`),
+- the portable core logic (`Savedrake.Core`),
 - a reflection-based restore test harness (`RestoreHarness`).
 
 The harness loads the built app and exercises the restore, backup-naming, and interval-parsing

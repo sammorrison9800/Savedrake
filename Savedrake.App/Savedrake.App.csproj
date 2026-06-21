@@ -15,16 +15,15 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <LangVersion>8.0</LangVersion>
-    <!-- Output exe is Savedrake.exe (not Savedrake.App.exe): the WPF app is now a drop-in replacement for the retired
-         WinForms Savedrake.exe, so the external Savedrake-Updater.exe (which targets/launches "Savedrake.exe") and an
-         auto-update from an existing v1.3.0 install land the WPF app correctly. The code namespace stays Savedrake.App
-         (RootNamespace), which is independent of the output exe name. -->
+    <!-- Output exe is Savedrake.exe (not Savedrake.App.exe): the WPF app is a drop-in replacement for the retired
+         WinForms Savedrake.exe, so updating over an existing install lands the WPF app correctly. The code namespace
+         stays Savedrake.App (RootNamespace), which is independent of the output exe name. -->
     <AssemblyName>Savedrake</AssemblyName>
     <RootNamespace>Savedrake.App</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <ApplicationIcon>savedrake.ico</ApplicationIcon>
     <!-- The shipped version. Drives the update check (must be >= the latest GitHub release so a fresh dev build does
-         not see a phantom update) and the version-handshake file the external updater reads. Matches the wordmark. -->
+         not see a phantom update). Matches the wordmark. -->
     <Version>1.4.0</Version>
     <AssemblyVersion>1.4.0.0</AssemblyVersion>
     <FileVersion>1.4.0.0</FileVersion>
@@ -47,7 +46,7 @@
   </ItemGroup>
 
   <!-- Microsoft.VisualBasic: FileIO.FileSystem.DeleteFile (send a deleted backup to the Recycle Bin, so deletes are
-       recoverable) and Interaction.InputBox (the rename prompt). Framework assembly on net48, named explicitly. -->
+       recoverable). Framework assembly on net48, named explicitly. -->
   <ItemGroup>
     <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>

@@ -5,8 +5,8 @@
         xmlns:vm="clr-namespace:Savedrake.App.ViewModels"
         Title="Savedrake"
         Icon="savedrake.ico"
-        Width="850" Height="760"
-        MinWidth="700" MinHeight="560"
+        Width="730" Height="720"
+        MinWidth="620" MinHeight="540"
         WindowStyle="None"
         AllowsTransparency="False"
         ResizeMode="CanResize"
@@ -34,7 +34,7 @@
     </Window.Resources>
 
     <!-- Outer margin so the espresso shell shows around the content. -->
-    <Grid Margin="12">
+    <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />   <!-- header -->
             <RowDefinition Height="Auto" />   <!-- gold rule -->
@@ -43,7 +43,7 @@
         </Grid.RowDefinitions>
 
         <!-- ============================ HEADER (draggable caption) ============================ -->
-        <Border Grid.Row="0" Background="{DynamicResource BarBrush}" CornerRadius="10,10,0,0" Padding="14,8">
+        <Border Grid.Row="0" Background="{DynamicResource BarBrush}" CornerRadius="10,10,0,0" Padding="12,7">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />   <!-- brand token -->
@@ -65,7 +65,7 @@
 
                 <!-- Wordmark in serif gold + small version. -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                    <TextBlock Text="Savedrake" FontFamily="Georgia, Times New Roman" FontSize="26"
+                    <TextBlock Text="Savedrake" FontFamily="Georgia, Times New Roman" FontSize="24"
                                Foreground="{DynamicResource WordmarkBrush}" VerticalAlignment="Center">
                         <TextBlock.Resources>
                             <Style TargetType="TextBlock">
@@ -166,7 +166,7 @@
              the rest as the single scroll region. This avoids the nested-scrollbar problem (an outer ScrollViewer plus
              the ListView's own scrollbar would show two bars side by side). The config cards fold away (carets) to give
              the list more room. -->
-        <Grid Grid.Row="2" Margin="0,12,0,0">
+        <Grid Grid.Row="2" Margin="0,10,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />   <!-- Folders (collapsible) -->
                 <RowDefinition Height="Auto" />   <!-- Autobackup (collapsible) -->
@@ -249,9 +249,9 @@
 
                         <!-- WHEN to back up: the triggers, grouped. The interval is the always-on crash safety net;
                              on-save and on-close are opt-in extras. Inputs lock while autobackup is on. -->
-                        <TextBlock Text="When to back up" Margin="26,14,0,0" FontSize="12" FontWeight="SemiBold"
+                        <TextBlock Text="When to back up" Margin="20,14,0,0" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Grid Margin="26,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
+                        <Grid Margin="20,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
@@ -267,17 +267,17 @@
                                        VerticalAlignment="Center" Margin="10,0,0,0" FontSize="11"
                                        Foreground="{DynamicResource TextHintBrush}" />
                         </Grid>
-                        <TextBlock Margin="26,4,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
+                        <TextBlock Margin="20,4,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
                                    Text="Examples: 5 minutes, 30 minutes, 1 hour, 2 hours (minimum 5 minutes)." />
                         <CheckBox Content="The instant the game saves"
-                                  IsChecked="{Binding BackupOnSaveEnabled}" Margin="26,10,0,0" />
+                                  IsChecked="{Binding BackupOnSaveEnabled}" Margin="20,10,0,0" />
                         <CheckBox Content="When I close the game"
-                                  IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="26,8,0,0" />
+                                  IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="20,8,0,0" />
 
                         <!-- HOW MANY to keep: retention. -->
-                        <TextBlock Text="How many to keep" Margin="26,16,0,0" FontSize="12" FontWeight="SemiBold"
+                        <TextBlock Text="How many to keep" Margin="20,16,0,0" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Grid Margin="26,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
+                        <Grid Margin="20,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
@@ -293,10 +293,10 @@
                                        FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </Grid>
                         <CheckBox Content="Remove the oldest autobackups once the limit is reached"
-                                  IsChecked="{Binding CleanupEnabled}" Margin="26,10,0,0" />
+                                  IsChecked="{Binding CleanupEnabled}" Margin="20,10,0,0" />
                         <CheckBox Content="Send removed autobackups to the Recycle Bin"
                                   IsChecked="{Binding RecycleEnabled}" IsEnabled="{Binding CleanupEnabled}"
-                                  Margin="52,8,0,0" />
+                                  Margin="44,6,0,0" />
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -311,7 +311,7 @@
                     </Grid.RowDefinitions>
 
                     <!-- Header row: title on the left, actions on the right. -->
-                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                    <Grid Grid.Row="0" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -458,7 +458,7 @@
         </Grid>
 
         <!-- ============================ STATUS BAR ============================ -->
-        <Border Grid.Row="3" Background="{DynamicResource BarBrush}" CornerRadius="0,0,10,10" Padding="14,7">
+        <Border Grid.Row="3" Background="{DynamicResource BarBrush}" CornerRadius="0,0,10,10" Padding="12,6">
             <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
         </Border>
     </Grid>

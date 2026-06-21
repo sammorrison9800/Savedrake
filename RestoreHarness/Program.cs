@@ -23,6 +23,8 @@ namespace RestoreHarness
         public void Info(string title, string message) { Infos.Add(title + " | " + message); }
         public void Warn(string title, string message) { Warns.Add(title + " | " + message); }
         public void Error(string title, string message) { Errors.Add(title + " | " + message); }
+        // Not exercised by the harness today (no prompt-driven flow is under test); returns null = cancelled.
+        public string Prompt(string title, string message, string defaultValue) => null;
     }
 
     internal sealed class StubStatus : IStatusSink

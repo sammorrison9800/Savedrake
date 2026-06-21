@@ -390,6 +390,9 @@ namespace Savedrake.App.ViewModels
                 IsLightTheme = string.Equals((string)root.Element("ThemeMode"), "Light", StringComparison.OrdinalIgnoreCase);
                 WindowWidth = ParseIntOr(root.Element("WindowWidth"), 0);
                 WindowHeight = ParseIntOr(root.Element("WindowHeight"), 0);
+                // One-time migration: the pre-1.4 window default was 850x760. If that exact size is saved, the user
+                // never deliberately resized, so clear it and let the newer, more compact default take over.
+                if (WindowWidth == 850 && WindowHeight == 760) { WindowWidth = 0; WindowHeight = 0; }
                 FoldersExpanded = ParseBoolOr(root.Element("FoldersExpanded"), true);
                 AutobackupSectionExpanded = ParseBoolOr(root.Element("AutobackupSectionExpanded"), true);
 
@@ -1113,10 +1116,9 @@ namespace Savedrake.App.ViewModels
         [RelayCommand]
         private void NewCharacter()
         {
-            string input = Microsoft.VisualBasic.Interaction.InputBox(
+            string input = _dialog.Prompt("New character",
                 "Name this character (for example, your in-game character's name). " +
-                "Savedrake keeps each character's backups in its own folder.",
-                "New character", "");
+                "Savedrake keeps each character's backups in its own folder.", "");
             if (string.IsNullOrWhiteSpace(input)) return;   // cancelled
             if (!CharacterFolder.IsValidName(input))
             {
@@ -1137,8 +1139,8 @@ namespace Savedrake.App.ViewModels
                 return;
             }
             string current = CharacterFolder.SafeName(ActiveCharacter);
-            string input = Microsoft.VisualBasic.Interaction.InputBox(
-                "Rename character \"" + current + "\". Its backups move with it.", "Rename character", current);
+            string input = _dialog.Prompt("Rename character",
+                "Rename character \"" + current + "\". Its backups move with it.", current);
             if (string.IsNullOrWhiteSpace(input)) return;                                    // cancelled
             string target = input.Trim();
             if (string.Equals(target, current, StringComparison.OrdinalIgnoreCase)) return;  // unchanged
@@ -1364,8 +1366,8 @@ namespace Savedrake.App.ViewModels
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
             string ext = Path.GetExtension(row.FileName);
-            string input = Microsoft.VisualBasic.Interaction.InputBox(
-                "Enter a new name for this backup:", "Rename Backup", Path.GetFileNameWithoutExtension(row.FileName));
+            string input = _dialog.Prompt("Rename Backup",
+                "Enter a new name for this backup:", Path.GetFileNameWithoutExtension(row.FileName));
             if (string.IsNullOrWhiteSpace(input)) return; // cancelled / empty
 
             string newName = Path.GetFileNameWithoutExtension(input.Trim()) + ext;
@@ -1467,6 +1469,14 @@ namespace Savedrake.App.ViewModels
 
             public void Error(string title, string message)
                 => MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+
+            // Themed single-line text prompt (replaces Microsoft.VisualBasic.Interaction.InputBox so the dialog matches
+            // the app's look). Returns the entered text, or null if the user cancelled / closed it.
+            public string Prompt(string title, string message, string defaultValue)
+            {
+                var dlg = new TextInputDialog(title, message, defaultValue) { Owner = Application.Current?.MainWindow };
+                return dlg.ShowDialog() == true ? dlg.ResponseText : null;
+            }
         }
 
         // Routes each Core Status.Text write into the bound StatusText property, marshalled to the UI thread.
