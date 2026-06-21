@@ -82,6 +82,15 @@ namespace Savedrake.App.ViewModels
 
         public bool UseTimestampName => !UseRandomName;
 
+        // Light vs dark theme (persisted as ThemeMode; default dark). ThemeMenuLabel drives the toggle's caption.
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(ThemeMenuLabel))]
+        private bool isLightTheme;
+
+        public string ThemeMenuLabel => IsLightTheme ? "Use dark theme" : "Use light theme";
+
+        public void SetTheme(bool light) { IsLightTheme = light; SaveSettings(); }
+
         // Last window size, restored on next launch (persisted as WindowWidth/WindowHeight). 0 = use the default.
         public int WindowWidth { get; private set; }
         public int WindowHeight { get; private set; }
@@ -227,6 +236,7 @@ namespace Savedrake.App.ViewModels
                 BackupOnSaveEnabled = ParseBool(root.Element("BackupOnSaveChange"));
                 MinimizeToTray = ParseBool(root.Element("CheckboxTray"));
                 UseRandomName = !ParseBool(root.Element("BackupFileName2")); // BackupFileName2 = time-stamped; default random
+                IsLightTheme = string.Equals((string)root.Element("ThemeMode"), "Light", StringComparison.OrdinalIgnoreCase);
                 WindowWidth = ParseIntOr(root.Element("WindowWidth"), 0);
                 WindowHeight = ParseIntOr(root.Element("WindowHeight"), 0);
 
@@ -285,6 +295,7 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "CheckboxTray", MinimizeToTray.ToString());
                 SetElement(root, "BackupFileName1", UseRandomName.ToString());
                 SetElement(root, "BackupFileName2", (!UseRandomName).ToString());
+                SetElement(root, "ThemeMode", IsLightTheme ? "Light" : "Dark");
                 if (WindowWidth > 0) SetElement(root, "WindowWidth", WindowWidth.ToString());
                 if (WindowHeight > 0) SetElement(root, "WindowHeight", WindowHeight.ToString());
 

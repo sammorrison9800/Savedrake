@@ -11,7 +11,7 @@
         AllowsTransparency="False"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource ShellBrush}"
+        Background="{DynamicResource ShellBrush}"
         TextOptions.TextFormattingMode="Display"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True">
@@ -39,7 +39,7 @@
         </Grid.RowDefinitions>
 
         <!-- ============================ HEADER (draggable caption) ============================ -->
-        <Border Grid.Row="0" Background="{StaticResource BarBrush}" CornerRadius="10,10,0,0" Padding="14,8">
+        <Border Grid.Row="0" Background="{DynamicResource BarBrush}" CornerRadius="10,10,0,0" Padding="14,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />   <!-- brand token -->
@@ -50,23 +50,23 @@
 
                 <!-- 40px circular brand token: card-filled ellipse, thin gold-alpha stroke, gold serif 'S'. -->
                 <Grid Grid.Column="0" Width="40" Height="40" VerticalAlignment="Center">
-                    <Ellipse Fill="{StaticResource CardBrush}" Stroke="{StaticResource GoldRuleBrush}" StrokeThickness="1" />
+                    <Ellipse Fill="{DynamicResource CardBrush}" Stroke="{DynamicResource GoldRuleBrush}" StrokeThickness="1" />
                     <TextBlock Text="S" FontFamily="Georgia, Times New Roman" FontSize="22" FontWeight="SemiBold"
-                               Foreground="{StaticResource WordmarkBrush}"
+                               Foreground="{DynamicResource WordmarkBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Grid>
 
                 <!-- Wordmark in serif gold + small version. -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
                     <TextBlock Text="Savedrake" FontFamily="Georgia, Times New Roman" FontSize="26"
-                               Foreground="{StaticResource WordmarkBrush}" VerticalAlignment="Center">
+                               Foreground="{DynamicResource WordmarkBrush}" VerticalAlignment="Center">
                         <TextBlock.Resources>
                             <Style TargetType="TextBlock">
                                 <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
                             </Style>
                         </TextBlock.Resources>
                     </TextBlock>
-                    <TextBlock Text="1.4.0" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                    <TextBlock Text="1.4.0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                VerticalAlignment="Bottom" Margin="8,0,0,5" />
                 </StackPanel>
 
@@ -96,6 +96,9 @@
                                                         RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 </MenuItem>
                                 <MenuItem Header="Set backup hotkey…" Click="SetHotkey_Click" />
+                                <MenuItem Header="{Binding PlacementTarget.DataContext.ThemeMenuLabel,
+                                                  RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          Click="ToggleTheme_Click" />
                                 <MenuItem Header="Minimize to system tray" IsCheckable="True"
                                           IsChecked="{Binding PlacementTarget.DataContext.MinimizeToTray,
                                                       RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=TwoWay}" />
@@ -132,7 +135,7 @@
         </Border>
 
         <!-- 1px gold hairline under the header. -->
-        <Border Grid.Row="1" Height="1" Background="{StaticResource GoldRuleBrush}" />
+        <Border Grid.Row="1" Height="1" Background="{DynamicResource GoldRuleBrush}" />
 
         <!-- ============================ CONTENT: three cards ============================ -->
         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="0,12,0,0">
@@ -158,24 +161,24 @@
 
                             <!-- Save game row -->
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Save game" VerticalAlignment="Center"
-                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding SaveDir}" IsReadOnly="True"
                                      VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
-                                     Background="{StaticResource InputBrush}" Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
                             <Button Grid.Row="0" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
                                     Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}"
                                     IsEnabled="{Binding ConfigEditable}" />
 
                             <!-- Backups row -->
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Backups" VerticalAlignment="Center"
-                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BackupDir}" IsReadOnly="True"
                                      VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
-                                     Background="{StaticResource InputBrush}" Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
                             <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="10,0,0,0"
-                                       FontSize="12" Foreground="{StaticResource TextHintBrush}"
+                                       FontSize="12" Foreground="{DynamicResource TextHintBrush}"
                                        Text="{Binding BackupCount, StringFormat={}{0} backups}" />
                             <Button Grid.Row="2" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
                                     Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}"
@@ -203,21 +206,21 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="Back up every" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Grid.Column="1" Width="120" Text="{Binding IntervalText}"
                                      VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
-                                     Background="{StaticResource InputBrush}" Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
                             <TextBlock Grid.Column="3" Text="Keep at most" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Grid.Column="4" Width="56" Text="{Binding MaxBackupsText}"
                                      VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
-                                     Background="{StaticResource InputBrush}" Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
                             <TextBlock Grid.Column="5" Text="backups" VerticalAlignment="Center" Margin="8,0,0,0"
-                                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" />
+                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </Grid>
-                        <TextBlock Margin="26,6,0,0" FontSize="11" Foreground="{StaticResource TextHintBrush}"
+                        <TextBlock Margin="26,6,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
                                    Text="Examples: 5 minutes, 30 minutes, 1 hour, 2 hours (minimum 5 minutes)." />
 
                         <!-- Options -->
@@ -259,9 +262,9 @@
                                   SelectionMode="Extended"
                                   KeyDown="BackupList_KeyDown"
                                   MouseDoubleClick="BackupList_MouseDoubleClick"
-                                  Background="{StaticResource CardBrush}"
-                                  BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                  Foreground="{StaticResource TextBrush}"
+                                  Background="{DynamicResource CardBrush}"
+                                  BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                  Foreground="{DynamicResource TextBrush}"
                                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                   MinHeight="180" MaxHeight="320">
                             <ListView.Resources>
@@ -277,9 +280,9 @@
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                                     <Setter Property="Padding" Value="0" />
                                     <Setter Property="BorderThickness" Value="0,0,0,1" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource RowSepBrush}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource RowSepBrush}" />
                                     <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                     <Setter Property="Template">
                                         <Setter.Value>
                                             <ControlTemplate TargetType="ListViewItem">
@@ -290,10 +293,10 @@
                                                 </Border>
                                                 <ControlTemplate.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter TargetName="bd" Property="Background" Value="{StaticResource CardAltBrush}" />
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource CardAltBrush}" />
                                                     </Trigger>
                                                     <Trigger Property="IsSelected" Value="True">
-                                                        <Setter TargetName="bd" Property="Background" Value="{StaticResource SelectionBrush}" />
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource SelectionBrush}" />
                                                     </Trigger>
                                                 </ControlTemplate.Triggers>
                                             </ControlTemplate>
@@ -347,7 +350,7 @@
 
                                         <!-- Status / pin pill. MultiBinding so it refreshes when Validate-all updates Status. -->
                                         <Border Grid.Column="2" Margin="10,0" Padding="8,2" CornerRadius="9"
-                                                Background="{StaticResource InputBrush}" VerticalAlignment="Center">
+                                                Background="{DynamicResource InputBrush}" VerticalAlignment="Center">
                                             <TextBlock FontSize="11">
                                                 <TextBlock.Text>
                                                     <MultiBinding Converter="{StaticResource PillText}">
@@ -366,7 +369,7 @@
 
                                         <!-- Friendly creation time, right-aligned and muted. -->
                                         <TextBlock Grid.Column="3" Text="{Binding FriendlyTime}" VerticalAlignment="Center"
-                                                   FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                                                   FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                                    TextAlignment="Right" MinWidth="80" />
                                     </Grid>
                                 </DataTemplate>
@@ -379,8 +382,8 @@
         </ScrollViewer>
 
         <!-- ============================ STATUS BAR ============================ -->
-        <Border Grid.Row="3" Background="{StaticResource BarBrush}" CornerRadius="0,0,10,10" Padding="14,7">
-            <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+        <Border Grid.Row="3" Background="{DynamicResource BarBrush}" CornerRadius="0,0,10,10" Padding="14,7">
+            <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
         </Border>
     </Grid>
 </Window>
