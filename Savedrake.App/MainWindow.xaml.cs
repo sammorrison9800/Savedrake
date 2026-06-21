@@ -1,7 +1,10 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
+using Savedrake.App.ViewModels;
 
 namespace Savedrake.App
 {
@@ -70,6 +73,34 @@ namespace Savedrake.App
                 try { Savedrake.Log.Error("DWM theming failed (non-fatal).", ex); }
                 catch { }
             }
+        }
+
+        // Backup-list keyboard shortcuts: Delete -> recycle selected, F2 -> rename, Ctrl+A -> select all.
+        private void BackupList_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (!(DataContext is MainViewModel vm)) return;
+            if (e.Key == Key.Delete)
+            {
+                vm.DeleteCommand.Execute(BackupList.SelectedItems);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.F2)
+            {
+                vm.RenameCommand.Execute(null);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.A && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                BackupList.SelectAll();
+                e.Handled = true;
+            }
+        }
+
+        // Double-click a row to open the backup zip. Guarded so a double-click on empty space is a no-op.
+        private void BackupList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (DataContext is MainViewModel vm && vm.SelectedBackup != null)
+                vm.OpenBackupCommand.Execute(vm.SelectedBackup);
         }
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
