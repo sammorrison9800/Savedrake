@@ -1,0 +1,29 @@
+<Window x:Class="Savedrake.App.HotkeyDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Set Backup Hotkey"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Border Background="{StaticResource ShellBrush}" BorderBrush="{StaticResource AccentGoldBrush}"
+            BorderThickness="1" CornerRadius="12" Padding="24" Width="430">
+        <StackPanel>
+            <TextBlock Text="Set Backup Hotkey" FontSize="18" FontWeight="SemiBold"
+                       Foreground="{StaticResource AccentGoldBrush}" Margin="0,0,0,8" />
+            <TextBlock Text="Hold Ctrl, Shift, or Alt and press a key. Press Enter to save, Esc to cancel."
+                       Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" TextWrapping="Wrap"
+                       Margin="0,0,0,16" />
+            <Border Background="{StaticResource InputBrush}" BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,18">
+                <TextBlock x:Name="ComboReadout" Text="Press your keys…" FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource AccentGoldBrush}" HorizontalAlignment="Center" />
+            </Border>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Clear hotkey" Style="{StaticResource DangerButton}" Padding="12,6" Click="Clear_Click" />
+                <Button Content="Cancel" Style="{StaticResource OutlineButton}" Padding="12,6" Margin="8,0,0,0" Click="Cancel_Click" />
+                <Button x:Name="SaveBtn" Content="Save" Style="{StaticResource PrimaryButton}" Padding="14,6"
+                        Margin="8,0,0,0" Click="Save_Click" IsEnabled="False" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
