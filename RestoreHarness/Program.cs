@@ -101,6 +101,7 @@ namespace RestoreHarness
                 Test_AutobackupCountStore();   // Phase 5: forgiving read of the autobackup count file (missing/garbled -> 0)
                 Test_AutobackupCleanup();   // Phase 5: auto-thinning excludes manual/pre-restore/pinned, removes surplus autos
                 Test_GameDetect();   // Phase 5: DD2 running-state registry read returns a bool and never throws
+                Test_SaveReadiness();   // "back up after the save settles": defer while a save file is exclusively locked
                 Test_UpdateCheck();   // Phase 6i: update version parsing (strip v, 2-4 numeric parts) + comparison
             }
             catch (Exception ex)
@@ -939,6 +940,42 @@ namespace RestoreHarness
             try { result = GameDetect.IsDd2Running(); } catch { threw = true; }
             Check("IsDd2Running() does not throw on a box without DD2", !threw);
             Check("IsDd2Running() reports not-running when the key is absent", result == false);
+            Console.WriteLine();
+        }
+
+        static void Test_SaveReadiness()
+        {
+            // "back up only after the save settles": IsSaveSettled defers a capture while the game holds a save file
+            // open exclusively (mid-write), and reports settled once writing has finished / the file is shared.
+            Console.WriteLine("== save readiness (settled-before-capture gate) ==");
+            string dir = Path.Combine(work, "readiness_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+
+            Check("missing folder is not settled (nothing to capture yet)",
+                SaveReadiness.IsSaveSettled(Path.Combine(dir, "nope")) == false);
+            Check("empty existing folder is settled (no writes in flight)",
+                SaveReadiness.IsSaveSettled(dir) == true);
+
+            string save = Path.Combine(dir, "data0000.bin");
+            File.WriteAllBytes(save, new byte[] { 1, 2, 3, 4 });
+            Check("a normal closed save file is settled",
+                SaveReadiness.IsSaveSettled(dir) == true);
+
+            using (new FileStream(save, FileMode.Open, FileAccess.Write, FileShare.None))
+                Check("an exclusively-locked save (game mid-write) is NOT settled",
+                    SaveReadiness.IsSaveSettled(dir) == false);
+
+            Check("settled again once the lock is released",
+                SaveReadiness.IsSaveSettled(dir) == true);
+
+            // A handle the game keeps open but shares for reading is still readable, so we must not over-defer on it.
+            using (new FileStream(save, FileMode.Open, FileAccess.Write, FileShare.Read))
+                Check("a save file open WITH read-sharing is still settled (not over-deferred)",
+                    SaveReadiness.IsSaveSettled(dir) == true);
+
+            bool threw = false;
+            try { SaveReadiness.IsSaveSettled(null); } catch { threw = true; }
+            Check("IsSaveSettled(null) never throws", !threw);
             Console.WriteLine();
         }
 

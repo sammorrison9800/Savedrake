@@ -256,6 +256,8 @@
                                   Margin="26,8,0,0" />
                         <CheckBox Content="Also back up the instant the game saves"
                                   IsChecked="{Binding BackupOnSaveEnabled}" Margin="0,12,0,0" />
+                        <CheckBox Content="Back up once more when I close the game"
+                                  IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="0,8,0,0" />
                     </StackPanel>
                 </StackPanel>
             </Border>

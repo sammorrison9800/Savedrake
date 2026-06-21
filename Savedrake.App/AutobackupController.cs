@@ -21,6 +21,7 @@ namespace Savedrake.App
         bool CleanupEnabled { get; }
         bool RecycleEnabled { get; }
         bool BackupOnSaveEnabled { get; }
+        bool BackupOnGameCloseEnabled { get; }  // take one final backup when DD2 exits (the safest capture moment)
         string CountFilePath { get; }
         string IntervalDisplay { get; }        // the interval as the user typed it, for status text ("30 minutes")
         bool IsOperationInProgress { get; }    // a manual backup/restore is mid-flight
@@ -197,22 +198,44 @@ namespace Savedrake.App
             }
             else
             {
+                // Game just closed: take one final, change-aware backup of the now fully-flushed save BEFORE tearing
+                // the timers down. This is the safest possible capture moment — the game has released the save file, so
+                // it is guaranteed fully written. It is the trigger every leading manager (GBM, Steam Cloud, GOG) uses
+                // by default. Gated on the user's opt-in and the change fingerprint, so it never duplicates a state the
+                // save watcher or the last interval tick already captured; runs with the running-gate bypassed
+                // precisely because the game is no longer running.
+                if (_host.BackupOnGameCloseEnabled)
+                    RunChangeAwareAutobackup(bypassChangeGate: false, onGameClose: true);
                 StopIntervalTimer();
                 StopSaveWatcher();
-                _host.Status.Set("Game not running. Autobackup paused.");
+                if (_host.AutobackupEnabled) // the on-close backup may have hit the limit and disabled the feature
+                    _host.Status.Set("Game not running. Autobackup paused.");
             }
         }
 
         // ----- one change-aware attempt (mirror of RunChangeAwareAutobackup) -----
 
-        private void RunChangeAwareAutobackup(bool bypassChangeGate = false)
+        private void RunChangeAwareAutobackup(bool bypassChangeGate = false, bool onGameClose = false)
         {
             if (_autoBackupInProgress) return;          // re-entrancy guard
             if (_host.IsOperationInProgress) return;    // a manual backup/restore is mid-flight
             _autoBackupInProgress = true;
             try
             {
-                bool running = GameDetect.IsDd2Running();
+                // Only ever capture a fully-written save. If the game still holds a save file open for writing
+                // (mid-save), defer to the next quiet window / interval tick rather than risk zipping a half-written
+                // file. BackupService also fails closed on a locked file and verifies every zip against a SHA-256
+                // manifest, so this is defence in depth — but it makes "back up only after the save settles" explicit
+                // and skips a pointless attempt mid-write. (At game close the file is already released, so this passes.)
+                if (!SaveReadiness.IsSaveSettled(_host.SaveDir))
+                {
+                    _host.Status.Set("Autobackup: the game is still saving, will retry shortly.");
+                    return;
+                }
+
+                // The game-close backup runs precisely because DD2 just exited, so the live running read is false here;
+                // force the running gate open for that one case (every other trigger requires the game to be running).
+                bool running = onGameClose || GameDetect.IsDd2Running();
                 int count = AutobackupCountStore.Read(_host.CountFilePath);
                 string currentFp = bypassChangeGate ? null : Fingerprint.ComputeSaveFingerprint(_host.SaveDir);
 
