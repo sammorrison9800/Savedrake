@@ -18,7 +18,14 @@
     <AssemblyName>Savedrake.App</AssemblyName>
     <RootNamespace>Savedrake.App</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <ApplicationIcon>savedrake.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- The window/taskbar/tray icon. Bundled as a Resource so the Window.Icon pack URI can load it, and set as the
+       exe ApplicationIcon above. Same icon the WinForms app ships. -->
+  <ItemGroup>
+    <Resource Include="savedrake.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />

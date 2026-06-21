@@ -4,6 +4,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:vm="clr-namespace:Savedrake.App.ViewModels"
         Title="Savedrake"
+        Icon="savedrake.ico"
         Width="850" Height="760"
         MinWidth="700" MinHeight="560"
         WindowStyle="None"
@@ -81,6 +82,10 @@
                                 <MenuItem Header="Undo last restore"
                                           Command="{Binding PlacementTarget.DataContext.UndoLastRestoreCommand,
                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Minimize to system tray" IsCheckable="True"
+                                          IsChecked="{Binding PlacementTarget.DataContext.MinimizeToTray,
+                                                      RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=TwoWay}" />
                                 <Separator />
                                 <MenuItem Header="Exit"
                                           Command="{Binding PlacementTarget.DataContext.ExitCommand,
