@@ -1119,6 +1119,10 @@ namespace Savedrake.App.ViewModels
                 _dialog.Error("Rename character", "Could not rename this character: " + ex.Message);
                 return;
             }
+            // Keep the "playing" character in sync if we just renamed the folder of the currently-loaded character,
+            // so LoadedCharacter/LoadedBackupDir don't point at the old (now-moved) folder.
+            if (string.Equals(LoadedCharacter, current, StringComparison.OrdinalIgnoreCase))
+                LoadedCharacter = target;
             ActiveCharacter = target;
             SaveSettings();
             _autobackup.OnActiveCharacterChanged();
@@ -1165,7 +1169,10 @@ namespace Savedrake.App.ViewModels
                 return;
             }
 
-            // Computed ONCE: the A==B guard and the snapshot decision must agree on the same reading.
+            // Computed ONCE: the A==B guard and the snapshot-abort decision must agree on the same reading. If the
+            // live folder changes between this read and the actual snapshot, the (Pre-Load) abort gate may be slightly
+            // stale, but that is not a data path: the destructive restore below takes its OWN fail-closed pre-restore
+            // checkpoint of whatever is actually live before the swap, so the outgoing save is captured regardless.
             bool liveHasSave = SaveScan.LiveFolderHasRealSave(SaveDir);
 
             // Loading the character whose save is already live is a rollback, which Restore handles — not Load. (When
