@@ -71,6 +71,21 @@ namespace Savedrake.App.ViewModels
         [ObservableProperty]
         private bool backupOnSaveEnabled;
 
+        // ----- Collapsible config sections -----
+        // The Folders and Autobackup cards fold to just their title so the Backups list (the thing you actually work
+        // with) can fill the window. Default expanded so a first run shows everything; the choice is persisted. The
+        // caret string flips between "open" (▾) and "closed" (▸) for the clickable header.
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(FoldersCaret))]
+        private bool foldersExpanded = true;
+
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(AutobackupSectionCaret))]
+        private bool autobackupSectionExpanded = true;
+
+        public string FoldersCaret => FoldersExpanded ? "▾" : "▸";
+        public string AutobackupSectionCaret => AutobackupSectionExpanded ? "▾" : "▸";
+
         // When on, minimizing hides the window to the system tray instead of the taskbar (persisted as CheckboxTray).
         [ObservableProperty]
         private bool minimizeToTray;
@@ -250,6 +265,8 @@ namespace Savedrake.App.ViewModels
                 IsLightTheme = string.Equals((string)root.Element("ThemeMode"), "Light", StringComparison.OrdinalIgnoreCase);
                 WindowWidth = ParseIntOr(root.Element("WindowWidth"), 0);
                 WindowHeight = ParseIntOr(root.Element("WindowHeight"), 0);
+                FoldersExpanded = ParseBoolOr(root.Element("FoldersExpanded"), true);
+                AutobackupSectionExpanded = ParseBoolOr(root.Element("AutobackupSectionExpanded"), true);
 
                 // Backup hotkey (nested <Hotkey> block + CheckboxHot), shared with the WinForms shape.
                 var hk = root.Element("Hotkey");
@@ -270,6 +287,11 @@ namespace Savedrake.App.ViewModels
 
         private static bool ParseBool(System.Xml.Linq.XElement el)
             => el != null && bool.TryParse(el.Value, out bool b) && b;
+
+        // Like ParseBool but returns the given default when the element is missing or unparseable (so a setting that
+        // defaults to true, e.g. a card starting expanded, is not forced false just by being absent on first run).
+        private static bool ParseBoolOr(System.Xml.Linq.XElement el, bool fallback)
+            => (el != null && bool.TryParse(el.Value, out bool b)) ? b : fallback;
 
         private static int ParseIntOr(System.Xml.Linq.XElement el, int fallback)
             => (el != null && int.TryParse(el.Value, out int n)) ? n : fallback;
@@ -309,6 +331,8 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "ThemeMode", IsLightTheme ? "Light" : "Dark");
                 if (WindowWidth > 0) SetElement(root, "WindowWidth", WindowWidth.ToString());
                 if (WindowHeight > 0) SetElement(root, "WindowHeight", WindowHeight.ToString());
+                SetElement(root, "FoldersExpanded", FoldersExpanded.ToString());
+                SetElement(root, "AutobackupSectionExpanded", AutobackupSectionExpanded.ToString());
 
                 // Backup hotkey (nested <Hotkey> block + CheckboxHot + the display string in Textbox3).
                 var hk = root.Element("Hotkey");
@@ -829,6 +853,10 @@ namespace Savedrake.App.ViewModels
 
         [RelayCommand] private void NameFormatRandom() => UseRandomName = true;
         [RelayCommand] private void NameFormatTimestamp() => UseRandomName = false;
+
+        // Fold / unfold the two config cards (persisted so the choice sticks across launches).
+        [RelayCommand] private void ToggleFolders() { FoldersExpanded = !FoldersExpanded; if (_loaded) SaveSettings(); }
+        [RelayCommand] private void ToggleAutobackupSection() { AutobackupSectionExpanded = !AutobackupSectionExpanded; if (_loaded) SaveSettings(); }
 
         // Persist the window size (called by the window on close so the next launch restores it).
         public void SaveWindowSize(int width, int height)

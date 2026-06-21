@@ -22,6 +22,8 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <!-- Folds the collapsible card bodies (Folders / Autobackup) on a bool. -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <!-- Display-only converters for the Backups list rows. -->
         <vm:PinnedToBrushConverter x:Key="PinDotBrush" OnKey="AccentGoldBrush" OffKey="TextSecondaryBrush" />
         <vm:PinnedToBrushConverter x:Key="PinNameBrush" OnKey="AccentGoldBrush" OffKey="TextBrush" />
@@ -139,61 +141,82 @@
         <!-- 1px gold hairline under the header. -->
         <Border Grid.Row="1" Height="1" Background="{DynamicResource GoldRuleBrush}" />
 
-        <!-- ============================ CONTENT: three cards ============================ -->
-        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="0,12,0,0">
-            <StackPanel>
+        <!-- ============================ CONTENT: config cards + backup list ============================ -->
+        <!-- A fixed 3-row grid (not a scrolling stack): the two config cards size to content, and the Backups list fills
+             the rest as the single scroll region. This avoids the nested-scrollbar problem (an outer ScrollViewer plus
+             the ListView's own scrollbar would show two bars side by side). The config cards fold away (carets) to give
+             the list more room. -->
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />   <!-- Folders (collapsible) -->
+                <RowDefinition Height="Auto" />   <!-- Autobackup (collapsible) -->
+                <RowDefinition Height="*" />      <!-- Backups list: fills, the only scroll region -->
+            </Grid.RowDefinitions>
 
-                <!-- Folders -->
-                <Border Style="{StaticResource CardBorder}">
-                    <StackPanel>
-                        <TextBlock Text="Folders" Style="{StaticResource SectionTitle}" />
+            <!-- Folders -->
+            <Border Grid.Row="0" Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Button Style="{StaticResource CardHeaderToggle}" Command="{Binding ToggleFoldersCommand}"
+                            ToolTip="Show or hide the folder paths">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding FoldersCaret}" Style="{StaticResource SectionCaret}" />
+                            <TextBlock Text="Folders" Style="{StaticResource SectionTitle}" Margin="6,0,0,0" />
+                        </StackPanel>
+                    </Button>
 
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="90" />    <!-- label -->
-                                <ColumnDefinition Width="*" />     <!-- path box -->
-                                <ColumnDefinition Width="Auto" />  <!-- count -->
-                                <ColumnDefinition Width="Auto" />  <!-- browse -->
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="8" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
+                    <Grid Visibility="{Binding FoldersExpanded, Converter={StaticResource BoolToVis}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="90" />    <!-- label -->
+                            <ColumnDefinition Width="*" />     <!-- path box -->
+                            <ColumnDefinition Width="Auto" />  <!-- count -->
+                            <ColumnDefinition Width="Auto" />  <!-- browse -->
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
 
-                            <!-- Save game row -->
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Save game" VerticalAlignment="Center"
-                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding SaveDir}" IsReadOnly="True"
-                                     VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
-                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
-                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                            <Button Grid.Row="0" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
-                                    Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}"
-                                    IsEnabled="{Binding ConfigEditable}" />
+                        <!-- Save game row -->
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Save game" VerticalAlignment="Center"
+                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding SaveDir}" IsReadOnly="True"
+                                 VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
+                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                        <Button Grid.Row="0" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
+                                Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}"
+                                IsEnabled="{Binding ConfigEditable}" />
 
-                            <!-- Backups row -->
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Backups" VerticalAlignment="Center"
-                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BackupDir}" IsReadOnly="True"
-                                     VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
-                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
-                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                            <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="10,0,0,0"
-                                       FontSize="12" Foreground="{DynamicResource TextHintBrush}"
-                                       Text="{Binding BackupCount, StringFormat={}{0} backups}" />
-                            <Button Grid.Row="2" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
-                                    Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}"
-                                    IsEnabled="{Binding ConfigEditable}" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                        <!-- Backups row -->
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Backups" VerticalAlignment="Center"
+                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BackupDir}" IsReadOnly="True"
+                                 VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
+                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                        <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="10,0,0,0"
+                                   FontSize="12" Foreground="{DynamicResource TextHintBrush}"
+                                   Text="{Binding BackupCount, StringFormat={}{0} backups}" />
+                        <Button Grid.Row="2" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
+                                Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}"
+                                IsEnabled="{Binding ConfigEditable}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
 
-                <!-- Autobackup -->
-                <Border Style="{StaticResource CardBorder}">
-                    <StackPanel>
-                        <TextBlock Text="Autobackup" Style="{StaticResource SectionTitle}" />
+            <!-- Autobackup -->
+            <Border Grid.Row="1" Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Button Style="{StaticResource CardHeaderToggle}" Command="{Binding ToggleAutobackupSectionCommand}"
+                            ToolTip="Show or hide the autobackup settings">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding AutobackupSectionCaret}" Style="{StaticResource SectionCaret}" />
+                            <TextBlock Text="Autobackup" Style="{StaticResource SectionTitle}" Margin="6,0,0,0" />
+                        </StackPanel>
+                    </Button>
 
+                    <StackPanel Visibility="{Binding AutobackupSectionExpanded, Converter={StaticResource BoolToVis}}">
                         <CheckBox Content="Back up automatically while Dragon's Dogma 2 is running"
                                   IsChecked="{Binding AutobackupEnabled}" Margin="0,2,0,0" />
 
@@ -234,42 +257,50 @@
                         <CheckBox Content="Also back up the instant the game saves"
                                   IsChecked="{Binding BackupOnSaveEnabled}" Margin="0,12,0,0" />
                     </StackPanel>
-                </Border>
+                </StackPanel>
+            </Border>
 
-                <!-- Backups -->
-                <Border Style="{StaticResource CardBorder}">
-                    <StackPanel>
-                        <!-- Header row: title on the left, actions on the right. -->
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Backups" Style="{StaticResource SectionTitle}"
-                                       Margin="0" VerticalAlignment="Center" />
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
-                                        Padding="14,7" Command="{Binding BackupCommand}" />
-                                <Button Content="Restore" Style="{StaticResource OutlineButton}"
-                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}"
-                                        CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
-                                <Button Content="Delete" Style="{StaticResource DangerButton}"
-                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
-                                        CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
-                            </StackPanel>
-                        </Grid>
+            <!-- Backups: the Border fills the remaining row; an inner grid lets the list (row 1) take all leftover
+                 height so the ListView's own scrollbar is the single scroll region. -->
+            <Border Grid.Row="2" Style="{StaticResource CardBorder}" Margin="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />   <!-- header row -->
+                        <RowDefinition Height="*" />      <!-- list fills the card -->
+                    </Grid.RowDefinitions>
 
-                        <!-- Backup list: dark, header-less, custom row template. Multi-select for delete. -->
-                        <ListView x:Name="BackupList" ItemsSource="{Binding Backups}"
-                                  SelectedItem="{Binding SelectedBackup, Mode=TwoWay}"
-                                  SelectionMode="Extended"
-                                  KeyDown="BackupList_KeyDown"
-                                  MouseDoubleClick="BackupList_MouseDoubleClick"
-                                  Background="{DynamicResource CardBrush}"
-                                  BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
-                                  Foreground="{DynamicResource TextBrush}"
-                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                  MinHeight="180" MaxHeight="320">
+                    <!-- Header row: title on the left, actions on the right. -->
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Backups" Style="{StaticResource SectionTitle}"
+                                   Margin="0" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
+                                    Padding="14,7" Command="{Binding BackupCommand}" />
+                            <Button Content="Restore" Style="{StaticResource OutlineButton}"
+                                    Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}"
+                                    CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
+                            <Button Content="Delete" Style="{StaticResource DangerButton}"
+                                    Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
+                                    CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Backup list: dark, header-less, custom row template. Multi-select for delete. Fills row 1; its
+                         own vertical scrollbar appears only when the rows overflow (no MinHeight/MaxHeight: the grid
+                         row drives the height). -->
+                    <ListView Grid.Row="1" x:Name="BackupList" ItemsSource="{Binding Backups}"
+                              SelectedItem="{Binding SelectedBackup, Mode=TwoWay}"
+                              SelectionMode="Extended"
+                              KeyDown="BackupList_KeyDown"
+                              MouseDoubleClick="BackupList_MouseDoubleClick"
+                              Background="{DynamicResource CardBrush}"
+                              BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                              Foreground="{DynamicResource TextBrush}"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListView.Resources>
                                 <!-- No column headers: this is a single-template list, not a grid. -->
                                 <Style TargetType="GridViewColumnHeader">
@@ -378,11 +409,9 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                    </StackPanel>
-                </Border>
-
-            </StackPanel>
-        </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
 
         <!-- ============================ STATUS BAR ============================ -->
         <Border Grid.Row="3" Background="{DynamicResource BarBrush}" CornerRadius="0,0,10,10" Padding="14,7">
