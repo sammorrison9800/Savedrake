@@ -53,12 +53,14 @@
                     <ColumnDefinition Width="Auto" />   <!-- right controls -->
                 </Grid.ColumnDefinitions>
 
-                <!-- 40px circular brand token: card-filled ellipse, thin gold-alpha stroke, gold serif 'S'. -->
+                <!-- 40px circular brand mark: the Savedrake dragon clipped into a thin gold-ringed disc. -->
                 <Grid Grid.Column="0" Width="40" Height="40" VerticalAlignment="Center">
-                    <Ellipse Fill="{DynamicResource CardBrush}" Stroke="{DynamicResource GoldRuleBrush}" StrokeThickness="1" />
-                    <TextBlock Text="S" FontFamily="Georgia, Times New Roman" FontSize="22" FontWeight="SemiBold"
-                               Foreground="{DynamicResource WordmarkBrush}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Ellipse Fill="{DynamicResource CardBrush}" Stroke="{DynamicResource GoldRuleBrush}" StrokeThickness="1.5" />
+                    <Ellipse Margin="1.5">
+                        <Ellipse.Fill>
+                            <ImageBrush ImageSource="savedrake.ico" Stretch="UniformToFill" />
+                        </Ellipse.Fill>
+                    </Ellipse>
                 </Grid>
 
                 <!-- Wordmark in serif gold + small version. -->
