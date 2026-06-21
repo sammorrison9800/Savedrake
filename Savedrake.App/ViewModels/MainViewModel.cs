@@ -39,6 +39,7 @@ namespace Savedrake.App.ViewModels
         private bool _loaded;               // false during initial settings load so property hooks don't react
         private bool _inEnableChange;       // re-entrancy guard while the enable toggle is being processed/reverted
         private bool _isOperationInProgress; // a manual backup/restore (or an autobackup) is mid-flight
+        private bool _setupComplete;        // persisted "user finished first-run setup"; see NeedsSetup
 
         // ----- Folders -----
 
@@ -47,6 +48,15 @@ namespace Savedrake.App.ViewModels
 
         [ObservableProperty]
         private string backupDir;
+
+        // IsConfigured/NeedsSetup also depend on Directory.Exists, which can change while the path string does not
+        // (folder deleted in Explorer, drive disconnected). During first-run that window is narrow; these hooks
+        // re-raise on path-string change, which is sufficient for the welcome panel to update live.
+        partial void OnSaveDirChanged(string value)
+        { OnPropertyChanged(nameof(NeedsSetup)); OnPropertyChanged(nameof(IsConfigured)); }
+
+        partial void OnBackupDirChanged(string value)
+        { OnPropertyChanged(nameof(NeedsSetup)); OnPropertyChanged(nameof(IsConfigured)); }
 
         // ----- Autobackup config (bound to the Autobackup card) -----
 
@@ -121,6 +131,16 @@ namespace Savedrake.App.ViewModels
             new ObservableCollection<string> { "5 minutes", "15 minutes", "30 minutes", "1 hour", "2 hours" };
 
         public bool ConfigEditable => !AutobackupEnabled;
+
+        // Both folders point at real, existing directories. This is "ready to use".
+        public bool IsConfigured =>
+            !string.IsNullOrWhiteSpace(SaveDir) && Directory.Exists(SaveDir) &&
+            !string.IsNullOrWhiteSpace(BackupDir) && Directory.Exists(BackupDir);
+
+        // First-run welcome shows only when setup was never completed AND folders aren't already usable.
+        // An existing user (folders already in savedrake_settings.xml) is IsConfigured == true, so this is false for
+        // them on the very first launch of this build, before the flag is ever written.
+        public bool NeedsSetup => !_setupComplete && !IsConfigured;
 
         // The shipped version shown by the wordmark, from the assembly version (single source of truth, drives the
         // update check too) — so a version bump updates the UI automatically instead of via a hardcoded string.
@@ -251,6 +271,16 @@ namespace Savedrake.App.ViewModels
                 if (!string.IsNullOrWhiteSpace(t1)) SaveDir = t1;
                 if (!string.IsNullOrWhiteSpace(t2)) BackupDir = t2;
 
+                _setupComplete = ParseBool(root.Element("SetupComplete"));
+                // Self-heal: an existing user with folders already set but no flag is treated as already set up.
+                // NOTE: this intentionally checks the path STRINGS only, not Directory.Exists. It covers the existing
+                // user whose backup drive is disconnected at launch (folders set, dir missing -> IsConfigured == false);
+                // the string-only flag keeps them out of first-run. Do NOT make this existence-based or that user gets
+                // re-onboarded.
+                if (!_setupComplete &&
+                    !string.IsNullOrWhiteSpace(SaveDir) && !string.IsNullOrWhiteSpace(BackupDir))
+                    _setupComplete = true;
+
                 string limit = (string)root.Element("AutoBackupLimit");
                 if (!string.IsNullOrWhiteSpace(limit)) MaxBackupsText = limit;
 
@@ -341,6 +371,7 @@ namespace Savedrake.App.ViewModels
                 if (WindowHeight > 0) SetElement(root, "WindowHeight", WindowHeight.ToString());
                 SetElement(root, "FoldersExpanded", FoldersExpanded.ToString());
                 SetElement(root, "AutobackupSectionExpanded", AutobackupSectionExpanded.ToString());
+                SetElement(root, "SetupComplete", _setupComplete.ToString());
 
                 // Backup hotkey (nested <Hotkey> block + CheckboxHot + the display string in Textbox3).
                 var hk = root.Element("Hotkey");
@@ -872,6 +903,36 @@ namespace Savedrake.App.ViewModels
         // Fold / unfold the two config cards (persisted so the choice sticks across launches).
         [RelayCommand] private void ToggleFolders() { FoldersExpanded = !FoldersExpanded; if (_loaded) SaveSettings(); }
         [RelayCommand] private void ToggleAutobackupSection() { AutobackupSectionExpanded = !AutobackupSectionExpanded; if (_loaded) SaveSettings(); }
+
+        // ----- first-run setup (the welcome panel that replaces the Folders card on first launch) -----
+
+        // The user set both folders in the welcome panel: mark setup done so the normal UI takes over and the panel
+        // never returns. Guarded so it can't complete half-configured.
+        [RelayCommand]
+        private void CompleteSetup()
+        {
+            if (!IsConfigured)
+            {
+                _dialog.Info("Almost there", "Please set both your save folder and your backup folder first.");
+                return;
+            }
+            _setupComplete = true;
+            SaveSettings();
+            OnPropertyChanged(nameof(NeedsSetup));
+            _status.Set("Setup complete. You're ready to back up your saves.");
+        }
+
+        // "I'll do this later": dismiss the welcome panel without requiring both folders. IsConfigured stays false, so
+        // the Autobackup/Backups cards remain disabled until the user sets folders via the normal Folders card's Browse
+        // buttons.
+        [RelayCommand]
+        private void SkipSetup()
+        {
+            _setupComplete = true;
+            SaveSettings();
+            OnPropertyChanged(nameof(NeedsSetup));
+            _status.Set("You can set your folders any time from the Folders card.");
+        }
 
         // Persist the window size (called by the window on close so the next launch restores it).
         public void SaveWindowSize(int width, int height)

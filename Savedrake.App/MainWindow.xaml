@@ -24,6 +24,8 @@
     <Window.Resources>
         <!-- Folds the collapsible card bodies (Folders / Autobackup) on a bool. -->
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <!-- Inverse of the above: hides the normal Folders card while the first-run welcome panel is showing. -->
+        <vm:InverseBoolToVisibilityConverter x:Key="NotBoolToVis" />
         <!-- Display-only converters for the Backups list rows. -->
         <vm:PinnedToBrushConverter x:Key="PinDotBrush" OnKey="AccentGoldBrush" OffKey="TextSecondaryBrush" />
         <vm:PinnedToBrushConverter x:Key="PinNameBrush" OnKey="AccentGoldBrush" OffKey="TextBrush" />
@@ -153,8 +155,9 @@
                 <RowDefinition Height="*" />      <!-- Backups list: fills, the only scroll region -->
             </Grid.RowDefinitions>
 
-            <!-- Folders -->
-            <Border Grid.Row="0" Style="{StaticResource CardBorder}">
+            <!-- Folders (hidden on first run, while the welcome panel below takes the row instead) -->
+            <Border Grid.Row="0" Style="{StaticResource CardBorder}"
+                    Visibility="{Binding NeedsSetup, Converter={StaticResource NotBoolToVis}}">
                 <StackPanel>
                     <Button Style="{StaticResource CardHeaderToggle}" Command="{Binding ToggleFoldersCommand}"
                             ToolTip="Show or hide the folder paths">
@@ -205,8 +208,64 @@
                 </StackPanel>
             </Border>
 
-            <!-- Autobackup -->
-            <Border Grid.Row="1" Style="{StaticResource CardBorder}">
+            <!-- First-run welcome (replaces the Folders card until both folders are set; reuses the existing
+                 Detect/Browse commands). Shown only when NeedsSetup is true; the cards below stay disabled until
+                 IsConfigured. -->
+            <Border Grid.Row="0" Style="{StaticResource CardBorder}"
+                    Visibility="{Binding NeedsSetup, Converter={StaticResource BoolToVis}}">
+                <StackPanel>
+                    <TextBlock Text="Welcome to Savedrake"
+                               FontFamily="Georgia, Times New Roman" FontSize="20"
+                               Foreground="{DynamicResource AccentGoldBrush}" Margin="0,2,0,6" />
+                    <TextBlock Text="Let's find your Dragon's Dogma 2 saves and pick a safe place to keep your backups. This only takes a moment."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13"
+                               TextWrapping="Wrap" Margin="0,0,0,16" />
+
+                    <TextBlock Text="1. Your save game folder" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}" Margin="0,0,0,6" />
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding SaveDir}" IsReadOnly="True"
+                                 VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
+                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                        <Button Grid.Column="1" Content="Find it for me" Style="{StaticResource PrimaryButton}"
+                                Padding="14,6" Margin="8,0,0,0" Command="{Binding DetectSaveFolderCommand}" />
+                        <Button Grid.Column="2" Content="Browse" Style="{StaticResource OutlineButton}"
+                                Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}" />
+                    </Grid>
+
+                    <TextBlock Text="2. Where to keep your backups" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}" Margin="0,0,0,6" />
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding BackupDir}" IsReadOnly="True"
+                                 VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
+                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                        <Button Grid.Column="1" Content="Choose folder" Style="{StaticResource OutlineButton}"
+                                Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}" />
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Content="I'll do this later" Style="{StaticResource OutlineButton}"
+                                Padding="14,8" Margin="0,0,8,0" Command="{Binding SkipSetupCommand}" />
+                        <Button Content="Start using Savedrake" Style="{StaticResource PrimaryButton}"
+                                Padding="16,8" Command="{Binding CompleteSetupCommand}"
+                                IsEnabled="{Binding IsConfigured}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Autobackup (disabled until both folders are configured) -->
+            <Border Grid.Row="1" Style="{StaticResource CardBorder}" IsEnabled="{Binding IsConfigured}">
                 <StackPanel>
                     <Button Style="{StaticResource CardHeaderToggle}" Command="{Binding ToggleAutobackupSectionCommand}"
                             ToolTip="Show or hide the autobackup settings">
@@ -264,7 +323,7 @@
 
             <!-- Backups: the Border fills the remaining row; an inner grid lets the list (row 1) take all leftover
                  height so the ListView's own scrollbar is the single scroll region. -->
-            <Border Grid.Row="2" Style="{StaticResource CardBorder}" Margin="0">
+            <Border Grid.Row="2" Style="{StaticResource CardBorder}" Margin="0" IsEnabled="{Binding IsConfigured}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />   <!-- header row -->
