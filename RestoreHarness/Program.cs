@@ -991,7 +991,7 @@ namespace RestoreHarness
             Console.WriteLine();
         }
 
-        // Locate the built Savedrake.App.exe output so the sound-asset test can confirm the WPF app ships the wavs.
+        // Locate the built WPF app output (now Savedrake.exe) so the sound-asset test can confirm the wavs ship.
         // Returns null if the App hasn't been built.
         static string ResolveAppBin()
         {
@@ -999,7 +999,7 @@ namespace RestoreHarness
             foreach (string cfg in new[] { "Release", "Debug" })
             {
                 string p = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Savedrake.App", "bin", cfg));
-                if (File.Exists(Path.Combine(p, "Savedrake.App.exe"))) return p;
+                if (File.Exists(Path.Combine(p, "Savedrake.exe"))) return p; // WPF app builds Savedrake.exe post-rename
             }
             return null;
         }
