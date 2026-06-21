@@ -37,5 +37,10 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- DotNetZip is consumed via the HintPath above; this packages.config makes `nuget restore` populate it into
+         ..\packages (previously the now-retired WinForms project's packages.config did that). -->
+    <None Include="packages.config" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
