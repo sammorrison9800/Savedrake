@@ -15,7 +15,11 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <LangVersion>8.0</LangVersion>
-    <AssemblyName>Savedrake.App</AssemblyName>
+    <!-- Output exe is Savedrake.exe (not Savedrake.App.exe): the WPF app is now a drop-in replacement for the retired
+         WinForms Savedrake.exe, so the external Savedrake-Updater.exe (which targets/launches "Savedrake.exe") and an
+         auto-update from an existing v1.3.0 install land the WPF app correctly. The code namespace stays Savedrake.App
+         (RootNamespace), which is independent of the output exe name. -->
+    <AssemblyName>Savedrake</AssemblyName>
     <RootNamespace>Savedrake.App</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <ApplicationIcon>savedrake.ico</ApplicationIcon>
