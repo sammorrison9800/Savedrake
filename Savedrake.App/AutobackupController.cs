@@ -116,7 +116,16 @@ namespace Savedrake.App
         // The user just took a manual backup: advance the baseline so the next autobackup attempt does not re-capture
         // an unchanged save (matches the WinForms baseline advance inside BackupOperation, which ran for manual backups
         // too). Harmless when autobackup is off.
-        public void NotifyExternalBackup()
+        public void NotifyExternalBackup() => AdvanceBaselineToCurrentSave();
+
+        // A restore just SUCCEEDED: advance the change-aware baseline to the restored save so a late FileSystemWatcher
+        // event from the restore's own writes (MoveDirContents / ClearReadOnlyRecursive) resolves to SkipNoChange
+        // instead of capturing the just-restored save as a brand-new autobackup. Mirrors the WinForms reference, which
+        // sets _lastAutoBackupFingerprint = ComputeSaveFingerprint(...) right after a successful RestoreTransactional.
+        // The caller gates this on RestoreResult.Ok so the baseline only moves when the save actually changed.
+        public void NotifyExternalRestore() => AdvanceBaselineToCurrentSave();
+
+        private void AdvanceBaselineToCurrentSave()
         {
             try { _lastFingerprint = Fingerprint.ComputeSaveFingerprint(_host.SaveDir); } catch { }
         }

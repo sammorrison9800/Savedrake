@@ -514,11 +514,12 @@ namespace Savedrake.App.ViewModels
             }
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
 
+            RestoreResult result = null;
             _isOperationInProgress = true;
             _autobackup.SuppressSaveWatcher = true; // the restore writes into the save folder — don't auto-back that up
             try
             {
-                RestoreService.Restore(
+                result = RestoreService.Restore(
                     new RestoreRequest
                     {
                         BackupZipPath = SelectedBackup.FullPath,
@@ -533,9 +534,13 @@ namespace Savedrake.App.ViewModels
                 _isOperationInProgress = false;
                 _autobackup.SuppressSaveWatcher = false;
             }
-            // Re-baseline the change-aware fingerprint to the now-restored save so the next autobackup tick doesn't
-            // immediately re-capture it (and any trailing watcher event for the restore's own writes finds no change).
-            _autobackup.NotifyExternalBackup();
+            // On a SUCCESSFUL restore, advance the change-aware baseline to the now-restored save (mirrors the WinForms
+            // reference, which set _lastAutoBackupFingerprint after a successful RestoreTransactional). SuppressSaveWatcher
+            // is cleared in the finally above, so a trailing FileSystemWatcher event from the restore's own writes can
+            // still arrive and, ~4s later, run the change-aware gate; with the baseline now equal to the restored
+            // content that gate resolves to SkipNoChange instead of capturing a redundant autobackup. Gated on Ok so the
+            // baseline only moves when the save actually changed (on failure the restore rolled back to the original).
+            if (result != null && result.Ok) _autobackup.NotifyExternalRestore();
             RefreshBackups();
         }
 
