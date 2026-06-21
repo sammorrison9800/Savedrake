@@ -13,6 +13,7 @@ namespace Savedrake.App
     {
         string SaveDir { get; }
         string BackupDir { get; }
+        string EffectiveBackupDir { get; }   // BackupDir\<active character>: where this character's backups actually live
         bool AutobackupEnabled { get; }
         TimeSpan AutobackupInterval { get; }   // already validated to the >= 5 min floor by the host
         bool IntervalValid { get; }
@@ -104,6 +105,16 @@ namespace Savedrake.App
                 StartSaveWatcher();
             else
                 StopSaveWatcher();
+        }
+
+        // The active character (the backup destination) changed. The live save folder is unchanged, so the watcher
+        // keeps running, but drop any save-write that is mid-debounce so it cannot land in the newly selected
+        // character's folder, and re-baseline to the current save so the switch itself never triggers a backup.
+        public void OnActiveCharacterChanged()
+        {
+            if (_disposed) return;
+            try { _quiesceTimer?.Stop(); } catch { }
+            AdvanceBaselineToCurrentSave();
         }
 
         // The interval text changed while autobackup is on. If DD2 is running (the timer is live), re-arm it with the
@@ -286,7 +297,7 @@ namespace Savedrake.App
                             _lastFingerprint = Fingerprint.ComputeSaveFingerprint(_host.SaveDir);
                             if (_host.CleanupEnabled)
                             {
-                                int removed = AutobackupCleanup.Run(_host.BackupDir, _host.MaxAutobackups, _host.RecycleEnabled, DateTime.UtcNow.Ticks);
+                                int removed = AutobackupCleanup.Run(_host.EffectiveBackupDir, _host.MaxAutobackups, _host.RecycleEnabled, DateTime.UtcNow.Ticks);
                                 if (removed > 0)
                                     _host.Status.Set(removed == 1 ? "Removed 1 old autobackup." : ("Removed " + removed + " old autobackups."));
                             }

@@ -49,14 +49,30 @@ namespace Savedrake.App.ViewModels
         [ObservableProperty]
         private string backupDir;
 
+        // The active character: the subfolder of BackupDir whose backups are shown and where new backups land. DD2 has
+        // one save slot, so a "character" is a named backup history. Persisted; defaults to "Default".
+        [ObservableProperty]
+        private string activeCharacter = CharacterFolder.Default;
+
         // IsConfigured/NeedsSetup also depend on Directory.Exists, which can change while the path string does not
         // (folder deleted in Explorer, drive disconnected). During first-run that window is narrow; these hooks
-        // re-raise on path-string change, which is sufficient for the welcome panel to update live.
+        // re-raise on path-string change, which is sufficient for the welcome panel to update live. BackupDir also
+        // feeds the per-character routing, so it re-raises those computed paths too.
         partial void OnSaveDirChanged(string value)
         { OnPropertyChanged(nameof(NeedsSetup)); OnPropertyChanged(nameof(IsConfigured)); }
 
         partial void OnBackupDirChanged(string value)
-        { OnPropertyChanged(nameof(NeedsSetup)); OnPropertyChanged(nameof(IsConfigured)); }
+        {
+            OnPropertyChanged(nameof(NeedsSetup)); OnPropertyChanged(nameof(IsConfigured));
+            OnPropertyChanged(nameof(EffectiveBackupDir)); OnPropertyChanged(nameof(CountFilePath));
+            OnPropertyChanged(nameof(BackupsTitle));
+        }
+
+        partial void OnActiveCharacterChanged(string value)
+        {
+            OnPropertyChanged(nameof(EffectiveBackupDir)); OnPropertyChanged(nameof(CountFilePath));
+            OnPropertyChanged(nameof(BackupsTitle));
+        }
 
         // ----- Autobackup config (bound to the Autobackup card) -----
 
@@ -177,6 +193,13 @@ namespace Savedrake.App.ViewModels
             _autobackup = new AutobackupController(this);
 
             LoadSettings();
+            // One-time, non-destructive migration to the folder-per-character layout: move any backups loose directly
+            // under the Backups folder into a "Default" character. Move-only, idempotent, resumable; a no-op once done
+            // or on first run (no folder yet). Runs before the first RefreshBackups so the list is already per-character.
+            var legacyCount = Path.Combine(AppDataDir, "count_of_autobackups.txt");
+            var migration = CharacterMigration.MigrateLooseToDefault(BackupDir, legacyCount);
+            if (migration.Ran) { ActiveCharacter = CharacterFolder.Default; SaveSettings(); }
+            EnsureEffectiveDirExists();
             RefreshBackups();
             _loaded = true;
             // The WMI watcher and any saved-on autobackup re-engage are deferred to Activate(), which the window calls
@@ -206,7 +229,35 @@ namespace Savedrake.App.ViewModels
         // immediately self-disable with a nonsensical "maximum number of 0 autobackups reached" message.
         public bool MaxAutobackupsValid => int.TryParse(MaxBackupsText, out int n) && n >= 1;
 
-        public string CountFilePath => Path.Combine(AppDataDir, "count_of_autobackups.txt");
+        // BackupDir is the parent folder the user picked; EffectiveBackupDir is the ACTIVE CHARACTER's subfolder, which
+        // is where that character's backups actually live. Every Core call routes through EffectiveBackupDir so each
+        // character keeps its own history. The empty-guard returns BackupDir unchanged on first run so every existing
+        // string.IsNullOrWhiteSpace(BackupDir) check keeps firing exactly as before.
+        public string EffectiveBackupDir =>
+            string.IsNullOrWhiteSpace(BackupDir)
+                ? BackupDir
+                : Path.Combine(BackupDir, CharacterFolder.SafeName(ActiveCharacter));
+
+        // The autobackup count cache lives inside the active character's folder (per-character retention). On first run
+        // (no BackupDir yet) it falls back to AppData, which is harmless since nothing reads it until a backup runs.
+        public string CountFilePath =>
+            string.IsNullOrWhiteSpace(BackupDir)
+                ? Path.Combine(AppDataDir, "count_of_autobackups.txt")
+                : Path.Combine(EffectiveBackupDir, "count_of_autobackups.txt");
+
+        // The Backups card title shows which character you are managing.
+        public string BackupsTitle => "Backups — " + CharacterFolder.SafeName(ActiveCharacter);
+
+        // Make sure the active character's backup folder exists before a backup/restore writes into it. Returns false
+        // (never throws) if there is no parent yet or it cannot be created; callers decide how to surface that (a modal
+        // for a manual action, a status line for the autobackup engine) so a valid parent is never mistaken for "no
+        // backup location selected" by BackupService.
+        private bool EnsureEffectiveDirExists()
+        {
+            if (string.IsNullOrWhiteSpace(BackupDir)) return false;
+            try { Directory.CreateDirectory(EffectiveBackupDir); return true; }
+            catch { return false; }
+        }
 
         public string IntervalDisplay => string.IsNullOrWhiteSpace(IntervalText) ? "the set interval" : IntervalText.Trim();
 
@@ -225,8 +276,9 @@ namespace Savedrake.App.ViewModels
             _isOperationInProgress = true;
             try
             {
+                if (!EnsureEffectiveDirExists()) { _status.Set("Autobackup paused: backup folder unavailable."); return false; }
                 BackupResult r = BackupService.Backup(
-                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = true, RandomName = UseRandomName },
+                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = EffectiveBackupDir, IsAutoBackup = true, RandomName = UseRandomName },
                     _dialog, _status);
                 if (r.Ok) _sound.Success(); else _sound.Error();
                 return r.Ok;
@@ -270,6 +322,11 @@ namespace Savedrake.App.ViewModels
                 string t2 = (string)root.Element("Textbox2");
                 if (!string.IsNullOrWhiteSpace(t1)) SaveDir = t1;
                 if (!string.IsNullOrWhiteSpace(t2)) BackupDir = t2;
+
+                // Active character: clamp an absent/garbled value to "Default" (IsValidName null-guards first).
+                var acEl = root.Element("ActiveCharacter");
+                string ac = acEl == null ? null : (string)acEl;
+                ActiveCharacter = CharacterFolder.IsValidName(ac) ? ac.Trim() : CharacterFolder.Default;
 
                 _setupComplete = ParseBool(root.Element("SetupComplete"));
                 // Self-heal: an existing user with folders already set but no flag is treated as already set up.
@@ -357,6 +414,7 @@ namespace Savedrake.App.ViewModels
 
                 SetElement(root, "Textbox1", SaveDir ?? "");
                 SetElement(root, "Textbox2", BackupDir ?? "");
+                SetElement(root, "ActiveCharacter", string.IsNullOrWhiteSpace(ActiveCharacter) ? CharacterFolder.Default : ActiveCharacter);
                 SetElement(root, "AutoBackupLimit", MaxBackupsText ?? "");
                 SetElement(root, "CheckboxAuto", AutobackupEnabled.ToString());
                 SetElement(root, "AutoCleanupOldBackups", CleanupEnabled.ToString());
@@ -547,6 +605,12 @@ namespace Savedrake.App.ViewModels
                 try { Directory.CreateDirectory(BackupDir); }
                 catch (Exception ex) { _dialog.Error("Error", "Could not create the backup location: " + ex.Message); return false; }
             }
+            // The active character's subfolder is where autobackups actually land; make sure it exists too.
+            if (!EnsureEffectiveDirExists())
+            {
+                if (!silent) _dialog.Error("Error", "Could not create this character's backup folder under the backup location.");
+                return false;
+            }
             if (!IntervalValid)
             {
                 if (!silent) _dialog.Error("Error", "Please choose an autobackup interval of at least 5 minutes.");
@@ -569,14 +633,13 @@ namespace Savedrake.App.ViewModels
         {
             Backups.Clear();
 
-            string dir = BackupDir;
+            string dir = EffectiveBackupDir;
             if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
             {
                 BackupCount = "0";
                 SelectedBackup = null;
-                // No valid backup folder -> the on-disk autobackup count is zero. Keep the count file honest so a
-                // later re-point doesn't inherit a stale count.
-                AutobackupCountStore.Write(CountFilePath, 0);
+                // No valid (character) backup folder yet -> nothing to count. AutobackupCountStore.Read already returns
+                // 0 for a missing count file, so there is nothing to write here (and the dir may not exist yet).
                 return;
             }
 
@@ -614,7 +677,9 @@ namespace Savedrake.App.ViewModels
 
             // Recompute and persist the autobackup count (non-pinned "(Auto)"/"auto" zips) so the "Keep at most N"
             // limit is enforced against the real files on disk. This is the writer the autobackup engine reads back;
-            // without it the limit never triggers. Mirrors WinForms LoadBackupHistory.
+            // without it the limit never triggers. Mirrors WinForms LoadBackupHistory. Ensure the character folder
+            // exists first so the per-character cache actually lands.
+            EnsureEffectiveDirExists();
             AutobackupCountStore.RecomputeAndWrite(dir, CountFilePath);
         }
 
@@ -684,10 +749,17 @@ namespace Savedrake.App.ViewModels
             _isOperationInProgress = true;
             try
             {
-                result = BackupService.Backup(
-                    new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = false, RandomName = UseRandomName },
-                    _dialog, _status);
-                if (result.Ok) _sound.Success(); else _sound.Error();
+                if (!EnsureEffectiveDirExists())
+                {
+                    _dialog.Error("Backup", "Savedrake could not create this character's backup folder. Check the Backups location.");
+                }
+                else
+                {
+                    result = BackupService.Backup(
+                        new BackupRequest { LiveSaveDir = SaveDir, BackupDir = EffectiveBackupDir, IsAutoBackup = false, RandomName = UseRandomName },
+                        _dialog, _status);
+                    if (result.Ok) _sound.Success(); else _sound.Error();
+                }
             }
             finally { _isOperationInProgress = false; }
 
@@ -728,15 +800,22 @@ namespace Savedrake.App.ViewModels
             _autobackup.SuppressSaveWatcher = true; // the restore writes into the save folder — don't auto-back that up
             try
             {
-                result = RestoreService.Restore(
-                    new RestoreRequest
-                    {
-                        BackupZipPath = backupZipPath,
-                        LiveSaveDir = SaveDir,
-                        BackupDir = BackupDir,
-                        GameRunning = GameDetect.IsDd2Running()
-                    },
-                    _dialog, _status);
+                if (!EnsureEffectiveDirExists())
+                {
+                    _dialog.Error("Restore", "Savedrake could not access this character's backup folder.");
+                }
+                else
+                {
+                    result = RestoreService.Restore(
+                        new RestoreRequest
+                        {
+                            BackupZipPath = backupZipPath,
+                            LiveSaveDir = SaveDir,
+                            BackupDir = EffectiveBackupDir,
+                            GameRunning = GameDetect.IsDd2Running()
+                        },
+                        _dialog, _status);
+                }
             }
             finally
             {
@@ -760,12 +839,12 @@ namespace Savedrake.App.ViewModels
         [RelayCommand]
         private void UndoLastRestore()
         {
-            if (string.IsNullOrWhiteSpace(BackupDir) || !Directory.Exists(BackupDir))
+            if (string.IsNullOrWhiteSpace(EffectiveBackupDir) || !Directory.Exists(EffectiveBackupDir))
             {
                 _dialog.Info("Undo last restore", "Please set your backup folder first.");
                 return;
             }
-            string checkpoint = SaveScan.FindLatestPreRestoreCheckpoint(BackupDir);
+            string checkpoint = SaveScan.FindLatestPreRestoreCheckpoint(EffectiveBackupDir);
             if (checkpoint == null)
             {
                 _dialog.Info("Nothing to undo",
@@ -932,6 +1011,70 @@ namespace Savedrake.App.ViewModels
             SaveSettings();
             OnPropertyChanged(nameof(NeedsSetup));
             _status.Set("You can set your folders any time from the Folders card.");
+        }
+
+        // ----- characters (per-character backup folders) -----
+
+        // Switch which character's backups are shown and where new backups land. NON-DESTRUCTIVE: it never touches the
+        // live DD2 save. Creates the character's folder if needed, re-baselines the autobackup engine, and refreshes.
+        [RelayCommand]
+        private void SwitchCharacter(string name)
+        {
+            if (!CharacterFolder.IsValidName(name)) return;
+            string safe = name.Trim();
+            if (string.Equals(safe, ActiveCharacter, StringComparison.OrdinalIgnoreCase)) return;
+            ActiveCharacter = safe;
+            SaveSettings();
+            if (!EnsureEffectiveDirExists())
+            {
+                _dialog.Error("Characters", "Savedrake could not create this character's backup folder.");
+                return;
+            }
+            _autobackup.OnActiveCharacterChanged();
+            RefreshBackups();
+            _status.Set("Now managing " + safe + "'s backups.");
+        }
+
+        // Prompt for a new character name and switch to it (its folder is created on first use).
+        [RelayCommand]
+        private void NewCharacter()
+        {
+            string input = Microsoft.VisualBasic.Interaction.InputBox(
+                "Name this character (for example, your in-game character's name). " +
+                "Savedrake keeps each character's backups in its own folder.",
+                "New character", "");
+            if (string.IsNullOrWhiteSpace(input)) return;   // cancelled
+            if (!CharacterFolder.IsValidName(input))
+            {
+                _dialog.Error("New character",
+                    "That name can't be used for a folder. Try letters, numbers, spaces, and dashes (up to 40 characters).");
+                return;
+            }
+            SwitchCharacter(input.Trim());
+        }
+
+        // The characters available to switch to: each subfolder of the backup location, plus the active one (so a
+        // just-created, still-empty character still shows). Count is "*.zip files" (includes checkpoints/manual zips).
+        public IReadOnlyList<(string Name, int FileCount)> EnumerateCharacters()
+        {
+            var list = new List<(string Name, int FileCount)>();
+            if (!string.IsNullOrWhiteSpace(BackupDir) && Directory.Exists(BackupDir))
+            {
+                string[] dirs;
+                try { dirs = Directory.GetDirectories(BackupDir); } catch { dirs = new string[0]; }
+                foreach (string d in dirs)
+                {
+                    string nm = Path.GetFileName(d);
+                    // Skip a subfolder whose name we couldn't switch to anyway (e.g. an externally-created folder
+                    // longer than the 40-char limit), so the menu never shows a row that does nothing when clicked.
+                    if (!CharacterFolder.IsValidName(nm)) continue;
+                    int n = 0; try { n = Directory.GetFiles(d, "*.zip").Length; } catch { }
+                    list.Add((nm, n));
+                }
+            }
+            if (!list.Any(x => string.Equals(x.Name, ActiveCharacter, StringComparison.OrdinalIgnoreCase)))
+                list.Insert(0, (ActiveCharacter, 0));
+            return list;
         }
 
         // Persist the window size (called by the window on close so the next launch restores it).
