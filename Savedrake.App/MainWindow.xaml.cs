@@ -306,6 +306,7 @@ namespace Savedrake.App
             }
             menu.Items.Add(new Separator());
             menu.Items.Add(new MenuItem { Header = "New character…", Command = vm.NewCharacterCommand });
+            menu.Items.Add(new MenuItem { Header = "Rename current character…", Command = vm.RenameCharacterCommand });
             menu.IsOpen = true;
         }
 

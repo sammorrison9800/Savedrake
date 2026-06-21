@@ -1053,6 +1053,51 @@ namespace Savedrake.App.ViewModels
             SwitchCharacter(input.Trim());
         }
 
+        // Rename the active character (non-destructive: moves its folder, so all of its backups move with it).
+        [RelayCommand]
+        private void RenameCharacter()
+        {
+            if (string.IsNullOrWhiteSpace(BackupDir))
+            {
+                _dialog.Info("Rename character", "Please set your backup folder first.");
+                return;
+            }
+            string current = CharacterFolder.SafeName(ActiveCharacter);
+            string input = Microsoft.VisualBasic.Interaction.InputBox(
+                "Rename character \"" + current + "\". Its backups move with it.", "Rename character", current);
+            if (string.IsNullOrWhiteSpace(input)) return;                                    // cancelled
+            string target = input.Trim();
+            if (string.Equals(target, current, StringComparison.OrdinalIgnoreCase)) return;  // unchanged
+            if (!CharacterFolder.IsValidName(target))
+            {
+                _dialog.Error("Rename character",
+                    "That name can't be used for a folder. Try letters, numbers, spaces, and dashes (up to 40 characters).");
+                return;
+            }
+            string from = Path.Combine(BackupDir, current);
+            string to = Path.Combine(BackupDir, target);
+            if (Directory.Exists(to))
+            {
+                _dialog.Error("Rename character", "A character named \"" + target + "\" already exists.");
+                return;
+            }
+            try
+            {
+                if (Directory.Exists(from)) Directory.Move(from, to);
+                else Directory.CreateDirectory(to);   // current character has no folder yet (never backed up): adopt the new name
+            }
+            catch (Exception ex)
+            {
+                _dialog.Error("Rename character", "Could not rename this character: " + ex.Message);
+                return;
+            }
+            ActiveCharacter = target;
+            SaveSettings();
+            _autobackup.OnActiveCharacterChanged();
+            RefreshBackups();
+            _status.Set("Renamed to " + target + ".");
+        }
+
         // The characters available to switch to: each subfolder of the backup location, plus the active one (so a
         // just-created, still-empty character still shows). Count is "*.zip files" (includes checkpoints/manual zips).
         public IReadOnlyList<(string Name, int FileCount)> EnumerateCharacters()
