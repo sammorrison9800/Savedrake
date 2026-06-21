@@ -355,6 +355,10 @@ namespace Savedrake.App.ViewModels
                 string lc = lcEl == null ? null : (string)lcEl;
                 LoadedCharacter = CharacterFolder.IsValidName(lc) ? lc.Trim() : CharacterFolder.Default;
 
+                var lblrEl = root.Element("LoadedBeforeLastRestore");
+                string lblr = lblrEl == null ? null : (string)lblrEl;
+                _loadedBeforeLastRestore = CharacterFolder.IsValidName(lblr) ? lblr.Trim() : null;
+
                 _setupComplete = ParseBool(root.Element("SetupComplete"));
                 // Self-heal: an existing user with folders already set but no flag is treated as already set up.
                 // NOTE: this intentionally checks the path STRINGS only, not Directory.Exists. It covers the existing
@@ -443,6 +447,8 @@ namespace Savedrake.App.ViewModels
                 SetElement(root, "Textbox2", BackupDir ?? "");
                 SetElement(root, "ActiveCharacter", string.IsNullOrWhiteSpace(ActiveCharacter) ? CharacterFolder.Default : ActiveCharacter);
                 SetElement(root, "LoadedCharacter", string.IsNullOrWhiteSpace(LoadedCharacter) ? CharacterFolder.Default : LoadedCharacter);
+                if (!string.IsNullOrWhiteSpace(_loadedBeforeLastRestore))
+                    SetElement(root, "LoadedBeforeLastRestore", _loadedBeforeLastRestore);
                 SetElement(root, "AutoBackupLimit", MaxBackupsText ?? "");
                 SetElement(root, "CheckboxAuto", AutobackupEnabled.ToString());
                 SetElement(root, "AutoCleanupOldBackups", CleanupEnabled.ToString());
@@ -880,24 +886,24 @@ namespace Savedrake.App.ViewModels
         // (Pre-Restore), so an Undo right after a load finds nothing to undo.
         private void UpdateLoadedCharacterAfterRestore(bool isUndo)
         {
+            string before = LoadedCharacter;   // who was playing just before this operation
             if (isUndo)
             {
-                if (!string.IsNullOrWhiteSpace(_loadedBeforeLastRestore) &&
-                    !string.Equals(LoadedCharacter, _loadedBeforeLastRestore, StringComparison.OrdinalIgnoreCase))
-                {
+                // An Undo restores the save that was live BEFORE the last restore, so the character live again is the
+                // one that was playing then. (Null only on a cross-session Undo before any restore this run — then we
+                // can't know, so leave it.)
+                if (!string.IsNullOrWhiteSpace(_loadedBeforeLastRestore))
                     LoadedCharacter = _loadedBeforeLastRestore;
-                    SaveSettings();
-                }
             }
             else
             {
-                _loadedBeforeLastRestore = LoadedCharacter;   // so a later Undo of this restore can put it back
-                if (!string.Equals(LoadedCharacter, ActiveCharacter, StringComparison.OrdinalIgnoreCase))
-                {
-                    LoadedCharacter = ActiveCharacter;
-                    SaveSettings();
-                }
+                // A forward Restore makes the ACTIVE character's chosen backup live, so it is now the one being played.
+                LoadedCharacter = ActiveCharacter;
             }
+            // Remember who was playing just before THIS operation so the opposite one (Undo <-> redo-via-Undo) flips
+            // back symmetrically. Persisted so a cross-session Undo still reverts correctly.
+            _loadedBeforeLastRestore = before;
+            SaveSettings();
         }
 
         // ----- File / Help menu commands -----
