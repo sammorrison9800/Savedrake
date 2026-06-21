@@ -251,7 +251,8 @@
                                 <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
                                         Padding="14,7" Command="{Binding BackupCommand}" />
                                 <Button Content="Restore" Style="{StaticResource OutlineButton}"
-                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}" />
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}"
+                                        CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
                                 <Button Content="Delete" Style="{StaticResource DangerButton}"
                                         Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
                                         CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />

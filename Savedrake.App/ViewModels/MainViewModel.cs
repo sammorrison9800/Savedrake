@@ -419,6 +419,16 @@ namespace Savedrake.App.ViewModels
         partial void OnCleanupEnabledChanged(bool value)
         {
             if (!_loaded) return;
+            // Turning automatic cleanup ON enables automatic removal of old autobackups, so ask first (parity with the
+            // shipped app). The revert re-enters with value=false, which persists and skips this confirm.
+            if (value && !_dialog.Confirm("Automatically clean up old autobackups",
+                    "Savedrake will keep your recent autobackups and a spread of older ones, then remove the extra " +
+                    "older autobackups so they don't pile up. Your manual backups and pinned backups are never " +
+                    "removed.\n\nTurn this on?"))
+            {
+                CleanupEnabled = false;
+                return;
+            }
             if (!value && RecycleEnabled) RecycleEnabled = false; // recycle only applies when cleanup is on
             SaveSettings();
         }
@@ -550,6 +560,13 @@ namespace Savedrake.App.ViewModels
                 _dialog.Error("Save location", "Your save folder can't be the same as your backup folder.");
                 return;
             }
+            // Advisory (parity): warn when the chosen folder isn't the default DD2 save layout. Not blocking — the
+            // backup itself still guards on real save data.
+            string p = picked.TrimEnd('\\', '/');
+            if (!p.EndsWith(@"\2054970\remote\win64_save", StringComparison.OrdinalIgnoreCase) &&
+                !_dialog.Confirm("Non-Default Path Selected",
+                    "The selected folder is not the default Dragon's Dogma 2 save folder (see Help). Use this folder anyway?"))
+                return;
             SaveDir = picked;
             SaveSettings();
             RefreshBackups();
@@ -593,23 +610,34 @@ namespace Savedrake.App.ViewModels
         private void Backup()
         {
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
+            BackupResult result = null;
             _isOperationInProgress = true;
             try
             {
-                BackupResult r = BackupService.Backup(
+                result = BackupService.Backup(
                     new BackupRequest { LiveSaveDir = SaveDir, BackupDir = BackupDir, IsAutoBackup = false, RandomName = UseRandomName },
                     _dialog, _status);
-                if (r.Ok) _sound.Success(); else _sound.Error();
+                if (result.Ok) _sound.Success(); else _sound.Error();
             }
             finally { _isOperationInProgress = false; }
 
-            _autobackup.NotifyExternalBackup(); // advance the change-aware baseline so autobackup doesn't re-capture
+            // Advance the change-aware baseline ONLY on a successful backup (mirrors the WinForms reference, which set
+            // _lastAutoBackupFingerprint after the atomic publish, and matches the restore path). Advancing it on a
+            // FAILED manual backup would make the next autobackup tick skip the un-backed-up save, leaving recent
+            // progress unprotected until the next in-game save.
+            if (result != null && result.Ok) _autobackup.NotifyExternalBackup();
             RefreshBackups();
         }
 
         [RelayCommand]
-        private void Restore()
+        private void Restore(System.Collections.IList selected)
         {
+            // Restore is single-backup; with multi-select on, refuse rather than silently restoring the anchor.
+            if (selected != null && selected.Count > 1)
+            {
+                _dialog.Warn("Restore", "Please select only one backup to restore at a time.");
+                return;
+            }
             if (SelectedBackup == null)
             {
                 _dialog.Warn("Restore", "Please select a backup to restore first.");
@@ -775,8 +803,10 @@ namespace Savedrake.App.ViewModels
             _status.Set("Backup hotkey cleared.");
         }
 
+        // Case-insensitive so a WinForms-saved hotkey whose Keys enum name differs only in casing from the WPF Key
+        // enum (e.g. "Oemplus" -> Key.OemPlus, "Oemcomma" -> Key.OemComma) still round-trips on the first WPF launch.
         private static int KeyNameToVk(string name)
-            => !string.IsNullOrWhiteSpace(name) && System.Enum.TryParse(name, out System.Windows.Input.Key k)
+            => !string.IsNullOrWhiteSpace(name) && System.Enum.TryParse(name, true, out System.Windows.Input.Key k)
                ? System.Windows.Input.KeyInterop.VirtualKeyFromKey(k) : 0;
 
         private static string VkToKeyName(int vk)
