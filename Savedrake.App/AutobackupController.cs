@@ -136,11 +136,13 @@ namespace Savedrake.App
         {
             try
             {
-                WindowsIdentity currentUser = WindowsIdentity.GetCurrent();
+                string userSid;
+                using (WindowsIdentity currentUser = WindowsIdentity.GetCurrent())
+                    userSid = currentUser.User.Value;
                 string keyPath = @"Software\Valve\Steam\Apps\" + GameDetect.Dd2SteamAppId;
                 var query = new WqlEventQuery(string.Format(
                     "SELECT * FROM RegistryValueChangeEvent WHERE Hive='HKEY_USERS' AND KeyPath='{0}\\\\{1}' AND ValueName='Running'",
-                    currentUser.User.Value, keyPath.Replace("\\", "\\\\")));
+                    userSid, keyPath.Replace("\\", "\\\\")));
                 _gameWatcher = new ManagementEventWatcher(query);
                 _gameWatcher.EventArrived += OnGameRegistryChanged;
                 _gameWatcher.Start();

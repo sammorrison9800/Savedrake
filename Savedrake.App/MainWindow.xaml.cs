@@ -37,6 +37,7 @@ namespace Savedrake.App
 
         // The system-tray icon (WinForms NotifyIcon; UseWindowsForms is on). Only visible while minimized-to-tray.
         private System.Windows.Forms.NotifyIcon _tray;
+        private System.Drawing.Icon _trayIcon; // NotifyIcon doesn't own its Icon, so we dispose it ourselves
 
         public MainWindow()
         {
@@ -127,7 +128,7 @@ namespace Savedrake.App
             try
             {
                 var res = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/savedrake.ico"));
-                if (res != null) using (var stream = res.Stream) _tray.Icon = new System.Drawing.Icon(stream);
+                if (res != null) using (var stream = res.Stream) { _trayIcon = new System.Drawing.Icon(stream); _tray.Icon = _trayIcon; }
             }
             catch { /* no icon -> NotifyIcon just won't show; non-fatal */ }
 
@@ -168,7 +169,8 @@ namespace Savedrake.App
         {
             UnregisterCurrentHotkey();
             try { _hwndSource?.RemoveHook(WndProc); } catch { }
-            try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; } } catch { }
+            try { if (_tray != null) { _tray.Visible = false; _tray.Icon = null; _tray.Dispose(); _tray = null; } } catch { }
+            try { if (_trayIcon != null) { _trayIcon.Dispose(); _trayIcon = null; } } catch { }
             // Persist the window size for next launch (RestoreBounds is the normal-state size even if minimized/maximized).
             if (DataContext is Savedrake.App.ViewModels.MainViewModel vm)
             {
@@ -195,7 +197,8 @@ namespace Savedrake.App
             }
             MessageBox.Show("Reset successful. Savedrake will now close.", "Reset Savedrake",
                 MessageBoxButton.OK, MessageBoxImage.Information);
-            try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; } } catch { }
+            try { if (_tray != null) { _tray.Visible = false; _tray.Icon = null; _tray.Dispose(); _tray = null; } } catch { }
+            try { if (_trayIcon != null) { _trayIcon.Dispose(); _trayIcon = null; } } catch { }
             Environment.Exit(0); // NOT Close() — that would run OnClosed -> SaveWindowSize and re-create the file
         }
 
@@ -266,6 +269,9 @@ namespace Savedrake.App
             ThemeManager.Apply(light);
             vm.SetTheme(light);
             ApplyDwmTheming();
+            // Rebuild the backup rows so their converter-painted dot/pill/name colours re-resolve against the new
+            // palette (the converters resolve concrete brush instances, so they don't follow the live brush swap).
+            vm.RefreshBackups();
         }
 
         // Open a header button's dropdown (File / Help) as a menu anchored under the button.
