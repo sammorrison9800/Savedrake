@@ -110,6 +110,9 @@ namespace RestoreHarness
                 Test_PreLoadCheckpoint();   // Load: (Pre-Load) snapshot naming + content + skip rules
                 Test_LoadSequence_Happy();   // Load: snapshot-outgoing then restore-target end-to-end; live becomes target
                 Test_LoadSequence_Cancelled();   // Load: declined restore leaves live untouched -> no flip (the no-limbo proof)
+                Test_SuppressedCheckpoint_StillRestores();   // Load: suppressed (Pre-Restore) still commits + writes no checkpoint
+                Test_DefaultStillCheckpoints();   // Restore: default (flag off) still writes a (Pre-Restore) (regression guard)
+                Test_UndoAfterLoad_Consistency();   // Load: no (Pre-Restore) in incoming folder -> undo-after-load consistent
             }
             catch (Exception ex)
             {
@@ -1258,6 +1261,51 @@ namespace RestoreHarness
             // The command flips LoadedCharacter only on res.Ok, so here it would NOT flip -> Loaded stays the outgoing
             // character, which still matches the (unchanged) live save. No limbo.
             Check("declined: flip-gate is false (LoadedCharacter would stay outgoing)", res.Ok == false);
+            Console.WriteLine();
+        }
+
+        static void Test_SuppressedCheckpoint_StillRestores()
+        {
+            Console.WriteLine("== load: suppressed pre-restore checkpoint still commits, writes no (Pre-Restore) ==");
+            SetupLoad(out string live, out string loadedFolder, out string activeFolder, out string targetZip);
+            RestoreResult res = RestoreService.Restore(
+                new RestoreRequest { BackupZipPath = targetZip, LiveSaveDir = live, BackupDir = activeFolder, GameRunning = false, SuppressPreRestoreCheckpoint = true },
+                new StubDialog { ConfirmResult = true }, new StubStatus());
+            Check("suppressed: restore Ok", res.Ok, "msg=" + (res != null ? res.Message : "null"));
+            Check("suppressed: live holds NEW data", File.ReadAllText(Path.Combine(live, "data000.bin")) == "NEW-DATA");
+            Check("suppressed: NO (Pre-Restore) written (transaction still ran)",
+                Directory.GetFiles(activeFolder, "(Pre-Restore)*.zip").Length == 0);
+            Console.WriteLine();
+        }
+
+        static void Test_DefaultStillCheckpoints()
+        {
+            Console.WriteLine("== restore: default (flag omitted) still writes a (Pre-Restore) checkpoint ==");
+            SetupLoad(out string live, out string loadedFolder, out string activeFolder, out string targetZip);
+            RestoreResult res = RestoreService.Restore(
+                new RestoreRequest { BackupZipPath = targetZip, LiveSaveDir = live, BackupDir = activeFolder, GameRunning = false },
+                new StubDialog { ConfirmResult = true }, new StubStatus());
+            Check("default: restore Ok", res.Ok);
+            Check("default: exactly one (Pre-Restore) checkpoint written (unchanged behavior)",
+                Directory.GetFiles(activeFolder, "(Pre-Restore)*.zip").Length == 1);
+            Console.WriteLine();
+        }
+
+        static void Test_UndoAfterLoad_Consistency()
+        {
+            Console.WriteLine("== load: no (Pre-Restore) in incoming folder -> undo-after-load is consistent ==");
+            SetupLoad(out string live, out string loadedFolder, out string activeFolder, out string targetZip);
+            // The exact load sequence: snapshot outgoing (A) into its own folder, then restore B with checkpoint suppressed.
+            RestoreEngine.CreatePreLoadCheckpoint(live, loadedFolder);
+            RestoreResult res = RestoreService.Restore(
+                new RestoreRequest { BackupZipPath = targetZip, LiveSaveDir = live, BackupDir = activeFolder, GameRunning = false, SuppressPreRestoreCheckpoint = true },
+                new StubDialog { ConfirmResult = true }, new StubStatus());
+            Check("load: Ok", res.Ok);
+            Check("outgoing (A) save preserved as (Pre-Load) in ITS own folder",
+                Directory.GetFiles(loadedFolder, "(Pre-Load)*.zip").Length == 1);
+            Check("incoming (B) folder has NO (Pre-Restore) -> Undo finds nothing (no wrong-character undo)",
+                Directory.GetFiles(activeFolder, "(Pre-Restore)*.zip").Length == 0
+                && SaveScan.FindLatestPreRestoreCheckpoint(activeFolder) == null);
             Console.WriteLine();
         }
 

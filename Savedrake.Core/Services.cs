@@ -35,6 +35,14 @@ namespace Savedrake
         public string LiveSaveDir;
         public string BackupDir;
         public bool GameRunning;
+
+        // Opt out of the pre-restore safety checkpoint (STEP 3b). Defaults false = unchanged behavior for the manual
+        // Restore and Undo paths. The "Load into game" path sets this true: it has ALREADY snapshotted the outgoing
+        // character's live save as a (Pre-Load) backup in that character's OWN folder, so a (Pre-Restore) here would be
+        // a misfiled duplicate (written into the INCOMING character's folder) and would make "Undo last restore" after
+        // a load roll the wrong character's save into live while LoadedCharacter stays the incoming one. Suppressing it
+        // does NOT weaken transactional rollback: that uses a separate sibling rollback dir, not this checkpoint.
+        public bool SuppressPreRestoreCheckpoint;
     }
 
     // Outcome of a restore. Ok = the swap committed. Cancelled = a guard stopped before any destructive work

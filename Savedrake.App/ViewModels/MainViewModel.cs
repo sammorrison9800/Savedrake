@@ -820,7 +820,7 @@ namespace Savedrake.App.ViewModels
         // _isOperationInProgress — the CALLER owns those, so it can be invoked inside an already-held lock (the "Load
         // into game" flow) without self-deadlocking or early-returning. Does NOT RefreshBackups (caller's job). Returns
         // the RestoreResult (null only when the folder guard failed and showed its own error).
-        private RestoreResult DoRestoreCore(string backupZipPath)
+        private RestoreResult DoRestoreCore(string backupZipPath, bool suppressPreRestoreCheckpoint = false)
         {
             if (!EnsureEffectiveDirExists())
             {
@@ -833,7 +833,8 @@ namespace Savedrake.App.ViewModels
                     BackupZipPath = backupZipPath,
                     LiveSaveDir = SaveDir,
                     BackupDir = EffectiveBackupDir,
-                    GameRunning = GameDetect.IsDd2Running()
+                    GameRunning = GameDetect.IsDd2Running(),
+                    SuppressPreRestoreCheckpoint = suppressPreRestoreCheckpoint
                 },
                 _dialog, _status);
             // On a SUCCESSFUL restore, advance the change-aware baseline to the now-restored save (mirrors the WinForms
@@ -851,7 +852,21 @@ namespace Savedrake.App.ViewModels
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
             _isOperationInProgress = true;
             _autobackup.SuppressSaveWatcher = true; // the restore writes into the save folder — don't auto-back that up
-            try { DoRestoreCore(backupZipPath); }
+            try
+            {
+                RestoreResult result = DoRestoreCore(backupZipPath);
+                // The live save now holds the ACTIVE character's data (a manual Restore restored the active character's
+                // backup; an Undo restored a (Pre-Restore) checkpoint, which only ever exists in the active character's
+                // own folder). So the character that is LIVE is now the active one — keep the persisted "playing"
+                // indicator in step with the live save. Gated on Ok so a cancelled/failed (rolled-back) restore leaves
+                // LoadedCharacter exactly as it was, still matching the untouched live save.
+                if (result != null && result.Ok &&
+                    !string.Equals(LoadedCharacter, ActiveCharacter, StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadedCharacter = ActiveCharacter;
+                    SaveSettings();
+                }
+            }
             finally
             {
                 _isOperationInProgress = false;
@@ -1215,7 +1230,10 @@ namespace Savedrake.App.ViewModels
                 }
 
                 // Step 2 — load the target via the hardened restore (its own single guard + single confirm + rollback).
-                result = DoRestoreCore(target);
+                // Suppress its (Pre-Restore) checkpoint: step 1 already snapshotted the OUTGOING character's save as a
+                // (Pre-Load) in its own folder, so a (Pre-Restore) here would be a misfiled duplicate in the INCOMING
+                // character's folder and would desync "Undo last restore" after a load.
+                result = DoRestoreCore(target, suppressPreRestoreCheckpoint: true);
 
                 // Step 3 — flip the persisted "playing" character IFF the live save is now the target.
                 if (result != null && result.Ok)

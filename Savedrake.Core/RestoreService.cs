@@ -95,17 +95,24 @@ namespace Savedrake
             // STEP 3b — pre-restore safety checkpoint (P4). RestoreTransactional deletes the current live save
             // on success, so snapshot it first into a "(Pre-Restore)" backup the user can roll back to. If the
             // snapshot can't be made, let the user decide rather than silently proceeding without a safety net.
-            status.Set("Creating pre-restore checkpoint...");
-            if (!RestoreEngine.CreatePreRestoreCheckpoint(liveDir, req.BackupDir))
+            // SKIPPED when req.SuppressPreRestoreCheckpoint is set (the "Load into game" path already preserved the
+            // outgoing save as a (Pre-Load) in its own folder, so a checkpoint here would be a misfiled duplicate). This
+            // is a user-Undo convenience only — the transactional rollback below uses a separate sibling rollback dir
+            // and is unaffected either way.
+            if (!req.SuppressPreRestoreCheckpoint)
             {
-                if (!dialog.Confirm(
-                        "Pre-Restore Checkpoint Failed",
-                        "Savedrake could not create a safety snapshot of your current save before restoring.\n\n" +
-                        "If you continue, your current save will be replaced and its current state will be lost.\n\n" +
-                        "Restore anyway?"))
+                status.Set("Creating pre-restore checkpoint...");
+                if (!RestoreEngine.CreatePreRestoreCheckpoint(liveDir, req.BackupDir))
                 {
-                    status.Set("Restore cancelled.");
-                    return new RestoreResult { Cancelled = true, Message = "Restore cancelled." };
+                    if (!dialog.Confirm(
+                            "Pre-Restore Checkpoint Failed",
+                            "Savedrake could not create a safety snapshot of your current save before restoring.\n\n" +
+                            "If you continue, your current save will be replaced and its current state will be lost.\n\n" +
+                            "Restore anyway?"))
+                    {
+                        status.Set("Restore cancelled.");
+                        return new RestoreResult { Cancelled = true, Message = "Restore cancelled." };
+                    }
                 }
             }
 
