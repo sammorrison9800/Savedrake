@@ -100,9 +100,7 @@
                     <Button Content="File" Style="{StaticResource HeaderMenuButton}" Click="HeaderMenu_Click">
                         <Button.ContextMenu>
                             <ContextMenu>
-                                <MenuItem Header="Detect save folder"
-                                          Command="{Binding PlacementTarget.DataContext.DetectSaveFolderCommand,
-                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Settings (folders)…" Click="Settings_Click" />
                                 <MenuItem Header="Undo last restore"
                                           Command="{Binding PlacementTarget.DataContext.UndoLastRestoreCommand,
                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
@@ -175,60 +173,10 @@
                 <RowDefinition Height="*" />      <!-- Backups list: fills, the only scroll region -->
             </Grid.RowDefinitions>
 
-            <!-- Folders (hidden on first run, while the welcome panel below takes the row instead) -->
-            <Border Grid.Row="0" Style="{StaticResource CardBorder}"
-                    Visibility="{Binding NeedsSetup, Converter={StaticResource NotBoolToVis}}">
-                <StackPanel>
-                    <Button Style="{StaticResource CardHeaderToggle}" Command="{Binding ToggleFoldersCommand}"
-                            ToolTip="Show or hide the folder paths">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{Binding FoldersCaret}" Style="{StaticResource SectionCaret}" />
-                            <TextBlock Text="Folders" Style="{StaticResource SectionTitle}" Margin="6,0,0,0" />
-                        </StackPanel>
-                    </Button>
+            <!-- Folder paths (save game + backups) now live in File > Settings, off the main screen since they are set
+                 once. Row 0 is taken by the first-run welcome panel until both folders are configured, then collapses. -->
 
-                    <Grid Visibility="{Binding FoldersExpanded, Converter={StaticResource BoolToVis}}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="90" />    <!-- label -->
-                            <ColumnDefinition Width="*" />     <!-- path box -->
-                            <ColumnDefinition Width="Auto" />  <!-- count -->
-                            <ColumnDefinition Width="Auto" />  <!-- browse -->
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="8" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <!-- Save game row -->
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Save game" VerticalAlignment="Center"
-                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding SaveDir}" IsReadOnly="True"
-                                 VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
-                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
-                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                        <Button Grid.Row="0" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
-                                Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}"
-                                IsEnabled="{Binding ConfigEditable}" />
-
-                        <!-- Backups row -->
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Backups" VerticalAlignment="Center"
-                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BackupDir}" IsReadOnly="True"
-                                 VerticalContentAlignment="Center" Padding="8,6" FontSize="12"
-                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
-                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                        <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="10,0,0,0"
-                                   FontSize="12" Foreground="{DynamicResource TextHintBrush}"
-                                   Text="{Binding BackupCount, StringFormat={}{0} backups}" />
-                        <Button Grid.Row="2" Grid.Column="3" Content="Browse" Style="{StaticResource OutlineButton}"
-                                Padding="14,6" Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}"
-                                IsEnabled="{Binding ConfigEditable}" />
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <!-- First-run welcome (replaces the Folders card until both folders are set; reuses the existing
+            <!-- First-run welcome (shown until both folders are set; reuses the existing
                  Detect/Browse commands). Shown only when NeedsSetup is true; the cards below stay disabled until
                  IsConfigured. -->
             <Border Grid.Row="0" Style="{StaticResource CardBorder}"

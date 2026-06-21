@@ -121,6 +121,13 @@ namespace Savedrake.App
             }
         }
 
+        // Open the folder Settings dialog (save game + backups paths). Shares the main window's view model so the
+        // path fields and Detect/Browse commands operate on the live state.
+        private void Settings_Click(object sender, RoutedEventArgs e)
+        {
+            new SettingsWindow { Owner = this, DataContext = DataContext }.ShowDialog();
+        }
+
         // Build the tray icon + its Show/Quit menu. Hidden until the window is minimized with "minimize to tray" on.
         private void InitTray()
         {
