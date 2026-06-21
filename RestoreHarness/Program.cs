@@ -39,13 +39,9 @@ namespace RestoreHarness
     internal static class Program
     {
         static int passed = 0, failed = 0;
-        static Type T;
-        static Assembly Core;           // Savedrake.Core.dll — logic extracted during the WPF migration
-        static object inst;             // uninitialized Main (constructor NOT run)
+        static Assembly Core;           // Savedrake.Core (the compile-time-referenced assembly)
         static string work;             // harness scratch root
 
-        static MethodInfo SM(string n) { var m = T.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Static); if (m == null) throw new Exception("static method not found: " + n); return m; }
-        static MethodInfo IM(string n) { var m = T.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Instance); if (m == null) throw new Exception("instance method not found: " + n); return m; }
         // Public static method on a Savedrake.Core type, e.g. CM("IntervalParser","TryParse").
         static MethodInfo CM(string typeName, string method) { var t = Core.GetType("Savedrake." + typeName); if (t == null) throw new Exception("core type not found: Savedrake." + typeName); var m = t.GetMethod(method, BindingFlags.Public | BindingFlags.Static); if (m == null) throw new Exception("core method not found: " + typeName + "." + method); return m; }
 
@@ -57,47 +53,12 @@ namespace RestoreHarness
 
         static Exception Unwrap(Exception e) { return e is TargetInvocationException && e.InnerException != null ? e.InnerException : e; }
 
-        // Locate the built Savedrake.exe: an explicit arg wins; otherwise look next to this harness
-        // (..\..\Savedrake v1.2.3\bin\<cfg>) so it works from the repo build output and in CI without a machine path.
-        static string ResolveBin(string[] args)
-        {
-            if (args.Length > 0) return args[0];
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            foreach (string cfg in new[] { "Release", "Debug" })
-            {
-                string p = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Savedrake v1.2.3", "bin", cfg));
-                if (File.Exists(Path.Combine(p, "Savedrake.exe"))) return p;
-            }
-            return Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Savedrake v1.2.3", "bin", "Release"));
-        }
-
         static int Main(string[] args)
         {
-            string bin = ResolveBin(args);
-            string exe = Path.Combine(bin, "Savedrake.exe");
-            if (!File.Exists(exe))
-            {
-                Console.WriteLine("Savedrake.exe not found at: " + exe);
-                Console.WriteLine("Pass the build output dir as arg 1, e.g.  RestoreHarness.exe \"...\\Savedrake v1.2.3\\bin\\Release\"");
-                return 2;
-            }
-            AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
-            {
-                string nm = new AssemblyName(e.Name).Name;
-                string p = Path.Combine(bin, nm + ".dll");
-                return File.Exists(p) ? Assembly.LoadFrom(p) : null;
-            };
-
-            Console.WriteLine("Loading " + exe);
-            Assembly asm = Assembly.LoadFrom(exe);
-            T = asm.GetType("Savedrake.Main");
-            if (T == null) { Console.WriteLine("Could not find Savedrake.Main"); return 2; }
-            inst = FormatterServices.GetUninitializedObject(T); // no ctor → no UI/registry/WMI
-
-            // Logic extracted into Savedrake.Core during the WPF migration is exercised directly from the Core assembly.
-            string corePath = Path.Combine(bin, "Savedrake.Core.dll");
-            Core = File.Exists(corePath) ? Assembly.LoadFrom(corePath) : null;
-            if (Core == null) { Console.WriteLine("Could not load Savedrake.Core.dll at: " + corePath); return 2; }
+            // Post-cutover: the harness runs entirely against Savedrake.Core (referenced at compile time and loaded
+            // next to this exe by normal probing). It no longer loads the retired WinForms Savedrake.exe — every test
+            // exercises Core directly (the CM reflection helper points at this same compile-time Core assembly).
+            Core = typeof(Savedrake.RestoreEngine).Assembly;
 
             work = Path.Combine(Path.GetTempPath(), "sdk_restore_harness_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(work);
@@ -1007,16 +968,17 @@ namespace RestoreHarness
 
         static void Test_SoundAssetsShipped()
         {
-            // PlayBackupSound resolves success.wav/error.wav from Application.StartupPath (the exe dir), so the
+            // SoundFeedback resolves success.wav/error.wav from the install dir (next to Savedrake.App.exe), so the
             // build must copy them there (Content + CopyToOutputDirectory). Guard against the csproj items being
             // dropped, which would silently kill all backup feedback sounds.
-            Console.WriteLine("== Sound assets shipped next to Savedrake.exe ==");
-            string dir = Path.GetDirectoryName(T.Assembly.Location);
+            Console.WriteLine("== Sound assets shipped next to Savedrake.App.exe ==");
+            string dir = ResolveAppBin();
+            if (dir == null) { Check("Savedrake.App build output found for sound-asset check", false, "ResolveAppBin() returned null"); Console.WriteLine(); return; }
             foreach (string wav in new[] { "success.wav", "error.wav" })
             {
                 string p = Path.Combine(dir, wav);
                 bool exists = File.Exists(p);
-                Check(wav + " present in build output", exists, p);
+                Check(wav + " present next to Savedrake.App.exe", exists, p);
                 if (exists)
                 {
                     byte[] head = new byte[12];
@@ -1026,23 +988,11 @@ namespace RestoreHarness
                     Check(wav + " is a valid RIFF/WAVE file", riffWave);
                 }
             }
-
-            // Phase 6a: the WPF app (Savedrake.App.exe) plays the same feedback sounds, resolved from its own install
-            // dir, so they must copy to the App's output too. Skipped if the App build output isn't present.
-            string appDir = ResolveAppBin();
-            if (appDir != null)
-            {
-                foreach (string wav in new[] { "success.wav", "error.wav" })
-                {
-                    string p = Path.Combine(appDir, wav);
-                    Check("Savedrake.App: " + wav + " present in build output", File.Exists(p), p);
-                }
-            }
             Console.WriteLine();
         }
 
-        // Locate the built Savedrake.App.exe output (sibling of the WinForms output), so the sound-asset test can
-        // confirm the WPF app ships the wavs too. Returns null if the App hasn't been built.
+        // Locate the built Savedrake.App.exe output so the sound-asset test can confirm the WPF app ships the wavs.
+        // Returns null if the App hasn't been built.
         static string ResolveAppBin()
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;

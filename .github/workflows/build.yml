@@ -33,7 +33,7 @@ jobs:
       - name: Run restore regression harness (${{ matrix.configuration }})
         shell: pwsh
         run: |
-          & ".\RestoreHarness\bin\RestoreHarness.exe" "Savedrake v1.2.3\bin\${{ matrix.configuration }}"
+          & ".\RestoreHarness\bin\RestoreHarness.exe"
           if ($LASTEXITCODE -ne 0) { Write-Error "Restore regression harness FAILED ($LASTEXITCODE)"; exit $LASTEXITCODE }
 
       - name: Upload Release artifacts
@@ -42,7 +42,7 @@ jobs:
         with:
           name: savedrake-release
           path: |
-            Savedrake v1.2.3/bin/Release/**
+            Savedrake.App/bin/Release/**
             updater/bin/Release/**
           if-no-files-found: warn
           retention-days: 7
