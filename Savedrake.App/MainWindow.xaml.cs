@@ -20,9 +20,7 @@ namespace Savedrake.App
 
         private const int DWMWCP_ROUND = 2;
 
-        // The header/caption bar color (#241C14) as a Win32 COLORREF (0x00BBGGRR).
-        // R=0x24, G=0x1C, B=0x14  ->  0x00141C24
-        private const int CaptionColorRef = 0x00141C24;
+        // The caption colour now comes from ThemeManager.CaptionColorRef (theme-aware).
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -44,6 +42,8 @@ namespace Savedrake.App
         {
             InitializeComponent();
             DataContext = new Savedrake.App.ViewModels.MainViewModel();
+            // Apply the saved theme before the first paint (no flash). Brush mutation repaints any existing controls.
+            ThemeManager.Apply((DataContext as Savedrake.App.ViewModels.MainViewModel)?.IsLightTheme ?? false);
             // Start the autobackup engine (WMI watcher) and re-engage a saved-on autobackup only once the window is
             // loaded, so any limit/invalid dialog from the immediate game-start backup has a real owner window. The
             // tray icon is created here too (after the window exists).
@@ -206,13 +206,13 @@ namespace Savedrake.App
                 IntPtr hwnd = new WindowInteropHelper(this).Handle;
                 if (hwnd == IntPtr.Zero) return;
 
-                int darkMode = 1;
+                int darkMode = ThemeManager.IsLight ? 0 : 1;
                 DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
 
                 int corner = DWMWCP_ROUND;
                 DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
 
-                int caption = CaptionColorRef;
+                int caption = ThemeManager.CaptionColorRef;
                 DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
             }
             catch (Exception ex)
@@ -248,6 +248,16 @@ namespace Savedrake.App
         {
             if (DataContext is MainViewModel vm && vm.SelectedBackup != null)
                 vm.OpenBackupCommand.Execute(vm.SelectedBackup);
+        }
+
+        // File > Use light/dark theme: swap the palette live, persist, and re-tint the DWM caption.
+        private void ToggleTheme_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(DataContext is Savedrake.App.ViewModels.MainViewModel vm)) return;
+            bool light = !vm.IsLightTheme;
+            ThemeManager.Apply(light);
+            vm.SetTheme(light);
+            ApplyDwmTheming();
         }
 
         // Open a header button's dropdown (File / Help) as a menu anchored under the button.
