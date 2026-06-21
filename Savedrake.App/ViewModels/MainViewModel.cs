@@ -40,6 +40,7 @@ namespace Savedrake.App.ViewModels
         private bool _inEnableChange;       // re-entrancy guard while the enable toggle is being processed/reverted
         private bool _isOperationInProgress; // a manual backup/restore (or an autobackup) is mid-flight
         private bool _setupComplete;        // persisted "user finished first-run setup"; see NeedsSetup
+        private string _loadedBeforeLastRestore; // the "playing" character before the last manual Restore, so Undo can revert it
 
         // ----- Folders -----
 
@@ -846,8 +847,10 @@ namespace Savedrake.App.ViewModels
         }
 
         // The shared restore path (used by Restore and Undo-last-restore): holds the operation lock + suppresses the
-        // save watcher around the lock-free core.
-        private void DoRestore(string backupZipPath)
+        // save watcher around the lock-free core. isUndo distinguishes "Undo last restore" (which restores the prior
+        // live save) from a forward Restore (which restores the active character's chosen backup) — they update the
+        // persisted "playing" character differently (see UpdateLoadedCharacterAfterRestore).
+        private void DoRestore(string backupZipPath, bool isUndo = false)
         {
             if (_isOperationInProgress) { _status.Set("Please wait, another operation is already running."); return; }
             _isOperationInProgress = true;
@@ -855,17 +858,7 @@ namespace Savedrake.App.ViewModels
             try
             {
                 RestoreResult result = DoRestoreCore(backupZipPath);
-                // The live save now holds the ACTIVE character's data (a manual Restore restored the active character's
-                // backup; an Undo restored a (Pre-Restore) checkpoint, which only ever exists in the active character's
-                // own folder). So the character that is LIVE is now the active one — keep the persisted "playing"
-                // indicator in step with the live save. Gated on Ok so a cancelled/failed (rolled-back) restore leaves
-                // LoadedCharacter exactly as it was, still matching the untouched live save.
-                if (result != null && result.Ok &&
-                    !string.Equals(LoadedCharacter, ActiveCharacter, StringComparison.OrdinalIgnoreCase))
-                {
-                    LoadedCharacter = ActiveCharacter;
-                    SaveSettings();
-                }
+                if (result != null && result.Ok) UpdateLoadedCharacterAfterRestore(isUndo);
             }
             finally
             {
@@ -873,6 +866,38 @@ namespace Savedrake.App.ViewModels
                 _autobackup.SuppressSaveWatcher = false;
             }
             RefreshBackups();
+        }
+
+        // Keep the persisted "playing" character (LoadedCharacter) in step with the live save after a successful
+        // Restore/Undo, so the "Playing: X" indicator never lies.
+        //  - A forward manual Restore puts the ACTIVE character's chosen backup into the live save, so the active
+        //    character is now the one being played. Remember who WAS playing first, so an Undo of THIS restore can put
+        //    it back (a (Pre-Restore) snapshot records the bytes that were live, but not which character they belonged
+        //    to — so we track that here rather than trying to infer it from the folder the checkpoint sits in).
+        //  - An Undo restores the (Pre-Restore) snapshot, i.e. exactly the save that was live just BEFORE the last
+        //    restore. The character live again is therefore the one that was playing before that restore — revert to it.
+        // The "Load into game" path does NOT go through here: it manages LoadedCharacter itself and suppresses its
+        // (Pre-Restore), so an Undo right after a load finds nothing to undo.
+        private void UpdateLoadedCharacterAfterRestore(bool isUndo)
+        {
+            if (isUndo)
+            {
+                if (!string.IsNullOrWhiteSpace(_loadedBeforeLastRestore) &&
+                    !string.Equals(LoadedCharacter, _loadedBeforeLastRestore, StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadedCharacter = _loadedBeforeLastRestore;
+                    SaveSettings();
+                }
+            }
+            else
+            {
+                _loadedBeforeLastRestore = LoadedCharacter;   // so a later Undo of this restore can put it back
+                if (!string.Equals(LoadedCharacter, ActiveCharacter, StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadedCharacter = ActiveCharacter;
+                    SaveSettings();
+                }
+            }
         }
 
         // ----- File / Help menu commands -----
@@ -901,7 +926,7 @@ namespace Savedrake.App.ViewModels
                     (when.Length > 0 ? " (" + when + ")" : "") + ".\n\n" +
                     "Your current save is snapshotted first, so you can redo.\n\nUndo the last restore?"))
                 return;
-            DoRestore(checkpoint);
+            DoRestore(checkpoint, isUndo: true);
         }
 
         // Auto-find the DD2 save folder via Steam and offer to set it. Only changes the folder on a Yes.
