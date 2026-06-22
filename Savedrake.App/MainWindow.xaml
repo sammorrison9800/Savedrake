@@ -22,11 +22,14 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <!-- Folds the collapsible card bodies (Folders / Autobackup) on a bool. -->
+        <!-- Show/hide on a bool (first-run welcome vs the tab shell; tooltips/hints). -->
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
-        <!-- Inverse of the above: hides the normal Folders card while the first-run welcome panel is showing. -->
+        <!-- Inverse of the above: hides the tab shell while the first-run welcome panel is showing. -->
         <vm:InverseBoolToVisibilityConverter x:Key="NotBoolToVis" />
-        <!-- Display-only converters for the Backups list rows. -->
+        <!-- Inverse bool (drives the second backup-name radio) and non-null bool (the "Switch to" enable gate). -->
+        <vm:InverseBoolConverter x:Key="NotBool" />
+        <vm:NotNullToBoolConverter x:Key="NotNullToBool" />
+        <!-- Display-only converters for the Backups + Characters list rows. -->
         <vm:PinnedToBrushConverter x:Key="PinDotBrush" OnKey="AccentGoldBrush" OffKey="TextSecondaryBrush" />
         <vm:PinnedToBrushConverter x:Key="PinNameBrush" OnKey="AccentGoldBrush" OffKey="TextBrush" />
         <vm:PinStatusToPillTextConverter x:Key="PillText" />
@@ -48,8 +51,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />   <!-- brand token -->
                     <ColumnDefinition Width="Auto" />   <!-- wordmark + version -->
-                    <ColumnDefinition Width="Auto" />   <!-- character switcher -->
-                    <ColumnDefinition Width="*" />      <!-- drag spacer -->
+                    <ColumnDefinition Width="*" />      <!-- drag spacer + playing hint -->
                     <ColumnDefinition Width="Auto" />   <!-- right controls -->
                 </Grid.ColumnDefinitions>
 
@@ -77,79 +79,14 @@
                                VerticalAlignment="Bottom" Margin="8,0,0,5" />
                 </StackPanel>
 
-                <!-- Character switcher: which character's backups you're managing. Clickable (opt out of caption drag). -->
-                <Button Grid.Column="2" Style="{StaticResource HeaderMenuButton}" Margin="18,0,0,0"
-                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        Click="CharacterMenu_Click" ToolTip="Switch character — each keeps its own backups">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Character:" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding ActiveCharacter}" Foreground="{DynamicResource WordmarkBrush}"
-                                   FontWeight="SemiBold" Margin="6,0,4,0" VerticalAlignment="Center" />
-                        <TextBlock Text="&#x25BE;" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
-
                 <!-- "Playing: X" hint, shown only while you're viewing a different character than the one that's live.
-                     Empty string renders as nothing (no converter needed). Sits in the draggable spacer column. -->
-                <TextBlock Grid.Column="3" Text="{Binding PlayingIndicator}" FontSize="11" FontWeight="SemiBold"
-                           Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                     Empty string renders as nothing. Sits at the start of the draggable spacer column. -->
+                <TextBlock Grid.Column="2" Text="{Binding PlayingIndicator}" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center" Margin="16,0,0,0" />
 
-                <!-- Right-side controls: clickable (opt out of caption drag). -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center"
+                <!-- Right-side controls: minimize + close. Clickable (opt out of caption drag). -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Button Content="File" Style="{StaticResource HeaderMenuButton}" Click="HeaderMenu_Click">
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Settings (folders)…" Click="Settings_Click" />
-                                <MenuItem Header="Undo last restore"
-                                          Command="{Binding PlacementTarget.DataContext.UndoLastRestoreCommand,
-                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                <Separator />
-                                <MenuItem Header="Backup name format">
-                                    <MenuItem Header="Randomly generated"
-                                              IsChecked="{Binding PlacementTarget.DataContext.UseRandomName,
-                                                          RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=OneWay}"
-                                              Command="{Binding PlacementTarget.DataContext.NameFormatRandomCommand,
-                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                    <MenuItem Header="Time stamped"
-                                              IsChecked="{Binding PlacementTarget.DataContext.UseTimestampName,
-                                                          RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=OneWay}"
-                                              Command="{Binding PlacementTarget.DataContext.NameFormatTimestampCommand,
-                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                </MenuItem>
-                                <MenuItem Header="Set backup hotkey…" Click="SetHotkey_Click" />
-                                <MenuItem Header="{Binding PlacementTarget.DataContext.ThemeMenuLabel,
-                                                  RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                          Click="ToggleTheme_Click" />
-                                <MenuItem Header="Minimize to system tray" IsCheckable="True"
-                                          IsChecked="{Binding PlacementTarget.DataContext.MinimizeToTray,
-                                                      RelativeSource={RelativeSource AncestorType=ContextMenu}, Mode=TwoWay}" />
-                                <Separator />
-                                <MenuItem Header="Reset Savedrake…" Click="Reset_Click" />
-                                <MenuItem Header="Exit"
-                                          Command="{Binding PlacementTarget.DataContext.ExitCommand,
-                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                    <Button Content="Help" Style="{StaticResource HeaderMenuButton}" Margin="2,0,8,0" Click="HeaderMenu_Click">
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Check for updates" Click="CheckUpdates_Click" />
-                                <Separator />
-                                <MenuItem Header="FAQ"
-                                          Command="{Binding PlacementTarget.DataContext.OpenFaqCommand,
-                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                <MenuItem Header="About"
-                                          Command="{Binding PlacementTarget.DataContext.OpenAboutCommand,
-                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                <Separator />
-                                <MenuItem Header="Open log folder"
-                                          Command="{Binding PlacementTarget.DataContext.OpenLogFolderCommand,
-                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
                     <Button x:Name="MinimizeButton" Content="&#x2014;" Style="{StaticResource CaptionButton}"
                             ToolTip="Minimize" Click="MinimizeButton_Click" />
                     <Button x:Name="CloseButton" Content="&#x2715;" Style="{StaticResource CaptionCloseButton}"
@@ -161,25 +98,12 @@
         <!-- 1px gold hairline under the header. -->
         <Border Grid.Row="1" Height="1" Background="{DynamicResource GoldRuleBrush}" />
 
-        <!-- ============================ CONTENT: config cards + backup list ============================ -->
-        <!-- A fixed 3-row grid (not a scrolling stack): the two config cards size to content, and the Backups list fills
-             the rest as the single scroll region. This avoids the nested-scrollbar problem (an outer ScrollViewer plus
-             the ListView's own scrollbar would show two bars side by side). The config cards fold away (carets) to give
-             the list more room. -->
+        <!-- ============================ CONTENT: first-run welcome OR the 3-tab shell ============================ -->
         <Grid Grid.Row="2" Margin="0,10,0,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />   <!-- Folders (collapsible) -->
-                <RowDefinition Height="Auto" />   <!-- Autobackup (collapsible) -->
-                <RowDefinition Height="*" />      <!-- Backups list: fills, the only scroll region -->
-            </Grid.RowDefinitions>
 
-            <!-- Folder paths (save game + backups) now live in File > Settings, off the main screen since they are set
-                 once. Row 0 is taken by the first-run welcome panel until both folders are configured, then collapses. -->
-
-            <!-- First-run welcome (shown until both folders are set; reuses the existing
-                 Detect/Browse commands). Shown only when NeedsSetup is true; the cards below stay disabled until
-                 IsConfigured. -->
-            <Border Grid.Row="0" Style="{StaticResource CardBorder}"
+            <!-- FIRST-RUN: shown in place of the whole tab shell until both folders are configured. Reuses the existing
+                 detect/browse commands. The buttons here are intentionally NOT ConfigEditable-gated (onboarding). -->
+            <Border Style="{StaticResource CardBorder}" VerticalAlignment="Top"
                     Visibility="{Binding NeedsSetup, Converter={StaticResource BoolToVis}}">
                 <StackPanel>
                     <TextBlock Text="Welcome to Savedrake"
@@ -232,127 +156,88 @@
                 </StackPanel>
             </Border>
 
-            <!-- Autobackup (disabled until both folders are configured) -->
-            <Border Grid.Row="1" Style="{StaticResource CardBorder}" IsEnabled="{Binding IsConfigured}">
-                <StackPanel>
-                    <Button Style="{StaticResource CardHeaderToggle}" Command="{Binding ToggleAutobackupSectionCommand}"
-                            ToolTip="Show or hide the autobackup settings">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{Binding AutobackupSectionCaret}" Style="{StaticResource SectionCaret}" />
-                            <TextBlock Text="Autobackup" Style="{StaticResource SectionTitle}" Margin="6,0,0,0" />
-                        </StackPanel>
-                    </Button>
+            <!-- NORMAL: the 3-tab shell, shown once setup is done or skipped. -->
+            <TabControl x:Name="MainTabs" Style="{StaticResource AppTabControl}"
+                        Visibility="{Binding NeedsSetup, Converter={StaticResource NotBoolToVis}}">
 
-                    <StackPanel Visibility="{Binding AutobackupSectionExpanded, Converter={StaticResource BoolToVis}}">
-                        <CheckBox Content="Back up automatically while Dragon's Dogma 2 is running"
-                                  IsChecked="{Binding AutobackupEnabled}" Margin="0,2,0,0" />
+                <!-- ===================== BACKUPS TAB ===================== -->
+                <TabItem Header="Backups">
+                    <!-- Body gated by IsConfigured: after Skip, the strip, actions and list stay disabled until folders
+                         are set (matches the old outer-card gate). -->
+                    <Grid IsEnabled="{Binding IsConfigured}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />   <!-- character strip -->
+                            <RowDefinition Height="Auto" />   <!-- title + actions -->
+                            <RowDefinition Height="*" />      <!-- list: the only scroll region -->
+                        </Grid.RowDefinitions>
 
-                        <!-- WHEN to back up: the triggers, grouped. The interval is the always-on crash safety net;
-                             on-save and on-close are opt-in extras. Inputs lock while autobackup is on. -->
-                        <TextBlock Text="When to back up" Margin="20,14,0,0" FontSize="12" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Grid Margin="20,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
+                        <!-- Row 0: character strip. One-click switching via the ComboBox; "Manage" jumps to Characters. -->
+                        <Border Grid.Row="0" Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Character:" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <ComboBox Grid.Column="1" x:Name="CharacterCombo" Margin="8,0,0,0" MinWidth="160"
+                                          ItemsSource="{Binding Characters}"
+                                          SelectedItem="{Binding SelectedCharacter, Mode=TwoWay}"
+                                          DisplayMemberPath="Name"
+                                          SelectionChanged="CharacterCombo_SelectionChanged"
+                                          ToolTip="Switch which character's backups you're managing. Each character keeps its own backups." />
+                                <TextBlock Grid.Column="2" Text="{Binding PlayingIndicator}" FontSize="11" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                                <Button Grid.Column="3" Content="Manage…" Style="{StaticResource OutlineButton}"
+                                        Padding="12,5" Click="GoToCharactersTab_Click"
+                                        ToolTip="See all your characters, add a new one, or rename one" />
+                            </Grid>
+                        </Border>
+
+                        <!-- Row 1: title + actions. -->
+                        <Grid Grid.Row="1" Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Every" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBox Grid.Column="1" Width="120" Text="{Binding IntervalText}"
-                                     VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
-                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
-                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                            <TextBlock Grid.Column="2" Text="(a safety net in case the game crashes mid-session)"
-                                       VerticalAlignment="Center" Margin="10,0,0,0" FontSize="11"
-                                       Foreground="{DynamicResource TextHintBrush}" />
+                            <TextBlock Grid.Column="0" Text="{Binding BackupsTitle}" Style="{StaticResource SectionTitle}"
+                                       Margin="0" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
+                                        Padding="14,7" Command="{Binding BackupCommand}" />
+                                <Button Content="Load into game" Style="{StaticResource PrimaryButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding LoadIntoGameCommand}"
+                                        ToolTip="Replace your live DD2 save with this character's newest backup (your current character is backed up first)" />
+                                <Button Content="Restore" Style="{StaticResource OutlineButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}"
+                                        CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
+                                <Button Content="Undo last restore" Style="{StaticResource OutlineButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding UndoLastRestoreCommand}"
+                                        ToolTip="Put your live DD2 save back the way it was right before your last restore or load." />
+                                <Button Content="Delete" Style="{StaticResource DangerButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
+                                        CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
+                            </StackPanel>
                         </Grid>
-                        <TextBlock Margin="20,4,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
-                                   Text="Examples: 5 minutes, 30 minutes, 1 hour, 2 hours (minimum 5 minutes)." />
-                        <CheckBox Content="The instant the game saves"
-                                  IsChecked="{Binding BackupOnSaveEnabled}" Margin="20,10,0,0" />
-                        <CheckBox Content="When I close the game"
-                                  IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="20,8,0,0" />
 
-                        <!-- HOW MANY to keep: retention. -->
-                        <TextBlock Text="How many to keep" Margin="20,16,0,0" FontSize="12" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Grid Margin="20,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Keep at most" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBox Grid.Column="1" Width="56" Text="{Binding MaxBackupsText}"
-                                     VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
-                                     Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
-                                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
-                            <TextBlock Grid.Column="2" Text="backups" VerticalAlignment="Center" Margin="8,0,0,0"
-                                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        </Grid>
-                        <CheckBox Content="Remove the oldest autobackups once the limit is reached"
-                                  IsChecked="{Binding CleanupEnabled}" Margin="20,10,0,0" />
-                        <CheckBox Content="Send removed autobackups to the Recycle Bin"
-                                  IsChecked="{Binding RecycleEnabled}" IsEnabled="{Binding CleanupEnabled}"
-                                  Margin="44,6,0,0" />
-                    </StackPanel>
-                </StackPanel>
-            </Border>
-
-            <!-- Backups: the Border fills the remaining row; an inner grid lets the list (row 1) take all leftover
-                 height so the ListView's own scrollbar is the single scroll region. -->
-            <Border Grid.Row="2" Style="{StaticResource CardBorder}" Margin="0" IsEnabled="{Binding IsConfigured}">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />   <!-- header row -->
-                        <RowDefinition Height="*" />      <!-- list fills the card -->
-                    </Grid.RowDefinitions>
-
-                    <!-- Header row: title on the left, actions on the right. -->
-                    <Grid Grid.Row="0" Margin="0,0,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding BackupsTitle}" Style="{StaticResource SectionTitle}"
-                                   Margin="0" VerticalAlignment="Center" />
-                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <Button Content="Back up now" Style="{StaticResource PrimaryButton}"
-                                    Padding="14,7" Command="{Binding BackupCommand}" />
-                            <Button Content="Load into game" Style="{StaticResource PrimaryButton}"
-                                    Padding="14,7" Margin="8,0,0,0" Command="{Binding LoadIntoGameCommand}"
-                                    ToolTip="Replace your live DD2 save with this character's newest backup (your current character is backed up first)" />
-                            <Button Content="Restore" Style="{StaticResource OutlineButton}"
-                                    Padding="14,7" Margin="8,0,0,0" Command="{Binding RestoreCommand}"
-                                    CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
-                            <Button Content="Delete" Style="{StaticResource DangerButton}"
-                                    Padding="14,7" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
-                                    CommandParameter="{Binding SelectedItems, ElementName=BackupList}" />
-                        </StackPanel>
-                    </Grid>
-
-                    <!-- Backup list: dark, header-less, custom row template. Multi-select for delete. Fills row 1; its
-                         own vertical scrollbar appears only when the rows overflow (no MinHeight/MaxHeight: the grid
-                         row drives the height). -->
-                    <ListView Grid.Row="1" x:Name="BackupList" ItemsSource="{Binding Backups}"
-                              SelectedItem="{Binding SelectedBackup, Mode=TwoWay}"
-                              SelectionMode="Extended"
-                              KeyDown="BackupList_KeyDown"
-                              MouseDoubleClick="BackupList_MouseDoubleClick"
-                              Background="{DynamicResource CardBrush}"
-                              BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
-                              Foreground="{DynamicResource TextBrush}"
-                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <!-- Row 2: the Backups list. Its own vertical scrollbar is the single scroll region. -->
+                        <ListView Grid.Row="2" x:Name="BackupList" ItemsSource="{Binding Backups}"
+                                  SelectedItem="{Binding SelectedBackup, Mode=TwoWay}"
+                                  SelectionMode="Extended"
+                                  KeyDown="BackupList_KeyDown"
+                                  MouseDoubleClick="BackupList_MouseDoubleClick"
+                                  Background="{DynamicResource CardBrush}"
+                                  BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                  Foreground="{DynamicResource TextBrush}"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListView.Resources>
-                                <!-- No column headers: this is a single-template list, not a grid. -->
                                 <Style TargetType="GridViewColumnHeader">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                 </Style>
                             </ListView.Resources>
 
-                            <!-- Dark, full-width, theme-coloured rows with a custom selection highlight. -->
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem">
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -383,7 +268,6 @@
                                 </Style>
                             </ListView.ItemContainerStyle>
 
-                            <!-- Right-click actions. Bound through the ListView's PlacementTarget to the view model. -->
                             <ListView.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="Rename"
@@ -416,17 +300,14 @@
                                             <ColumnDefinition Width="Auto" />  <!-- friendly time -->
                                         </Grid.ColumnDefinitions>
 
-                                        <!-- Leading dot: gold if pinned, muted otherwise. -->
                                         <Ellipse Grid.Column="0" Width="8" Height="8" VerticalAlignment="Center"
                                                  Margin="0,0,10,0"
                                                  Fill="{Binding IsPinned, Converter={StaticResource PinDotBrush}}" />
 
-                                        <!-- File name: gold if pinned, normal text otherwise. -->
                                         <TextBlock Grid.Column="1" Text="{Binding FileName}" VerticalAlignment="Center"
                                                    FontSize="13" TextTrimming="CharacterEllipsis"
                                                    Foreground="{Binding IsPinned, Converter={StaticResource PinNameBrush}}" />
 
-                                        <!-- Status / pin pill. MultiBinding so it refreshes when Validate-all updates Status. -->
                                         <Border Grid.Column="2" Margin="10,0" Padding="8,2" CornerRadius="9"
                                                 Background="{DynamicResource InputBrush}" VerticalAlignment="Center">
                                             <TextBlock FontSize="11">
@@ -445,7 +326,6 @@
                                             </TextBlock>
                                         </Border>
 
-                                        <!-- Friendly creation time, right-aligned and muted. -->
                                         <TextBlock Grid.Column="3" Text="{Binding FriendlyTime}" VerticalAlignment="Center"
                                                    FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                                    TextAlignment="Right" MinWidth="80" />
@@ -453,8 +333,337 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                </Grid>
-            </Border>
+                    </Grid>
+                </TabItem>
+
+                <!-- ===================== CHARACTERS TAB ===================== -->
+                <TabItem Header="Characters">
+                    <Grid IsEnabled="{Binding IsConfigured}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />   <!-- title + actions -->
+                            <RowDefinition Height="*" />      <!-- list: the only scroll region -->
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Characters" Style="{StaticResource SectionTitle}"
+                                       Margin="0" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="New character" Style="{StaticResource PrimaryButton}"
+                                        Padding="14,7" Command="{Binding NewCharacterCommand}" />
+                                <Button Content="Rename" Style="{StaticResource OutlineButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding RenameCharacterCommand}"
+                                        ToolTip="Rename the current character (the one shown in bold). Its backups move with it." />
+                                <Button Content="Switch to" Style="{StaticResource OutlineButton}"
+                                        Padding="14,7" Margin="8,0,0,0"
+                                        Command="{Binding SwitchCharacterCommand}"
+                                        CommandParameter="{Binding SelectedItem.Name, ElementName=CharacterList}"
+                                        Click="SwitchToButton_Click"
+                                        IsEnabled="{Binding SelectedCharacter, Converter={StaticResource NotNullToBool}}" />
+                                <Button Content="Load into game" Style="{StaticResource PrimaryButton}"
+                                        Padding="14,7" Margin="8,0,0,0" Command="{Binding LoadIntoGameCommand}"
+                                        ToolTip="Replace your live DD2 save with the current character's newest backup (your current character is backed up first)" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ListView Grid.Row="1" x:Name="CharacterList" ItemsSource="{Binding Characters}"
+                                  SelectedItem="{Binding SelectedCharacter, Mode=TwoWay}"
+                                  MouseDoubleClick="CharacterList_MouseDoubleClick"
+                                  SelectionMode="Single"
+                                  Background="{DynamicResource CardBrush}"
+                                  BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                  Foreground="{DynamicResource TextBrush}"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListView.Resources>
+                                <Style TargetType="GridViewColumnHeader">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Style>
+                            </ListView.Resources>
+
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource RowSepBrush}" />
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListViewItem">
+                                                <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                                        BorderThickness="{TemplateBinding BorderThickness}">
+                                                    <ContentPresenter VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource CardAltBrush}" />
+                                                    </Trigger>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource SelectionBrush}" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListView.ItemContainerStyle>
+
+                            <ListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Switch to"
+                                              Command="{Binding PlacementTarget.DataContext.SwitchCharacterCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.SelectedItem.Name,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                </ContextMenu>
+                            </ListView.ContextMenu>
+
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="10,9">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />  <!-- dot -->
+                                            <ColumnDefinition Width="*" />     <!-- name -->
+                                            <ColumnDefinition Width="Auto" />  <!-- badges -->
+                                            <ColumnDefinition Width="Auto" />  <!-- count -->
+                                        </Grid.ColumnDefinitions>
+
+                                        <Ellipse Grid.Column="0" Width="8" Height="8" VerticalAlignment="Center"
+                                                 Margin="0,0,10,0"
+                                                 Fill="{Binding IsActive, Converter={StaticResource PinDotBrush}}" />
+
+                                        <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
+                                                   FontSize="13" TextTrimming="CharacterEllipsis"
+                                                   Foreground="{Binding IsActive, Converter={StaticResource PinNameBrush}}" />
+
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Border Padding="8,2" CornerRadius="9" Margin="0,0,6,0"
+                                                    Background="{DynamicResource InputBrush}"
+                                                    Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="Current" FontSize="11"
+                                                           Foreground="{DynamicResource AccentGoldBrush}" />
+                                            </Border>
+                                            <Border Padding="8,2" CornerRadius="9"
+                                                    Background="{DynamicResource InputBrush}"
+                                                    Visibility="{Binding IsPlaying, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="Playing" FontSize="11"
+                                                           Foreground="{DynamicResource SuccessBrush}" />
+                                            </Border>
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Column="3" Text="{Binding CountLabel}" VerticalAlignment="Center"
+                                                   FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   TextAlignment="Right" MinWidth="80" Margin="10,0,0,0" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
+                <!-- ===================== SETTINGS TAB ===================== -->
+                <!-- NEVER gated by IsConfigured: after Skip-setup this is the only way to reach Folders and finish.
+                     The single ScrollViewer is the ONLY scroller in this tab. -->
+                <TabItem Header="Settings">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,0,6,0">
+                        <StackPanel>
+
+                            <!-- 1. Folders -->
+                            <Border Style="{StaticResource CardBorder}">
+                                <StackPanel>
+                                    <TextBlock Text="Folders" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Where Savedrake finds your Dragon's Dogma 2 save and keeps your backups. You usually set these once."
+                                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,14" />
+
+                                    <TextBlock Text="Save game folder" FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextBrush}" Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0" Text="{Binding SaveDir}" IsReadOnly="True" VerticalContentAlignment="Center"
+                                                 Padding="8,6" FontSize="12" Background="{DynamicResource InputBrush}"
+                                                 Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                                        <Button Grid.Column="1" Content="Find it for me" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="8,0,0,0" Command="{Binding DetectSaveFolderCommand}" IsEnabled="{Binding ConfigEditable}" />
+                                        <Button Grid.Column="2" Content="Browse" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="8,0,0,0" Command="{Binding BrowseSaveCommand}" IsEnabled="{Binding ConfigEditable}" />
+                                    </Grid>
+
+                                    <TextBlock Text="Backups folder" FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextBrush}" Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0" Text="{Binding BackupDir}" IsReadOnly="True" VerticalContentAlignment="Center"
+                                                 Padding="8,6" FontSize="12" Background="{DynamicResource InputBrush}"
+                                                 Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" />
+                                        <Button Grid.Column="1" Content="Browse" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="8,0,0,0" Command="{Binding BrowseBackupCommand}" IsEnabled="{Binding ConfigEditable}" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding BackupCount, StringFormat={}{0} backups for the current character}"
+                                               FontSize="11" Foreground="{DynamicResource TextHintBrush}" Margin="0,0,0,8" />
+                                    <TextBlock Text="Folders are locked while automatic backup is turned on. Turn it off to change them."
+                                               FontSize="11" Foreground="{DynamicResource TextHintBrush}" TextWrapping="Wrap"
+                                               Visibility="{Binding AutobackupEnabled, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 2. Autobackup (disabled until folders are set) -->
+                            <Border Style="{StaticResource CardBorder}" IsEnabled="{Binding IsConfigured}">
+                                <StackPanel>
+                                    <TextBlock Text="Autobackup" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Savedrake watches Dragon's Dogma 2 and quietly saves copies of your game while you play, so a crash or a bad ending can't cost you your progress."
+                                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <CheckBox Content="Back up automatically while Dragon's Dogma 2 is running"
+                                              IsChecked="{Binding AutobackupEnabled}" Margin="0,6,0,0"
+                                              ToolTip="When this is on, Savedrake makes backups in the background the whole time the game is open. Turn it off to make backups only by hand." />
+
+                                    <TextBlock Text="When to back up" Margin="20,14,0,0" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Grid Margin="20,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Every" VerticalAlignment="Center" Margin="0,0,8,0"
+                                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBox Grid.Column="1" Width="120" Text="{Binding IntervalText}"
+                                                 VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
+                                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                                 ToolTip="How often to take a timed backup while you play. This is your safety net if the game crashes before it saves. Type a time like 5 minutes, 30 minutes, 1 hour, or 2 hours. The shortest allowed is 5 minutes." />
+                                        <TextBlock Grid.Column="2" Text="(a safety net in case the game crashes mid-session)"
+                                                   VerticalAlignment="Center" Margin="10,0,0,0" FontSize="11"
+                                                   Foreground="{DynamicResource TextHintBrush}" />
+                                    </Grid>
+                                    <TextBlock Margin="20,4,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}"
+                                               Text="Examples: 5 minutes, 30 minutes, 1 hour, 2 hours (minimum 5 minutes)." />
+                                    <CheckBox Content="The instant the game saves"
+                                              IsChecked="{Binding BackupOnSaveEnabled}" Margin="20,10,0,0"
+                                              ToolTip="Also make a backup every time the game writes a save. This catches your latest progress the moment it happens, on top of the timed backups." />
+                                    <CheckBox Content="When I close the game"
+                                              IsChecked="{Binding BackupOnGameCloseEnabled}" Margin="20,8,0,0"
+                                              ToolTip="Make one last backup when you quit Dragon's Dogma 2. This is the safest moment to copy your save, because the game has finished writing to it." />
+
+                                    <TextBlock Text="How many to keep" Margin="20,16,0,0" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Grid Margin="20,8,0,0" IsEnabled="{Binding ConfigEditable}" HorizontalAlignment="Left">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Keep at most" VerticalAlignment="Center" Margin="0,0,8,0"
+                                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBox Grid.Column="1" Width="56" Text="{Binding MaxBackupsText}"
+                                                 VerticalContentAlignment="Center" Padding="8,5" FontSize="12"
+                                                 Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                                 ToolTip="How many automatic backups to keep for this character. Older ones are removed once you go past this number, so your backup folder doesn't grow forever. Backups you have pinned are always kept and never counted here." />
+                                        <TextBlock Grid.Column="2" Text="backups" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                   FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </Grid>
+                                    <TextBlock Text="Pinned backups are always kept and don't count toward this limit."
+                                               Margin="20,4,0,0" FontSize="11" Foreground="{DynamicResource TextHintBrush}" />
+                                    <CheckBox Content="Remove the oldest automatic backups once the limit is reached"
+                                              IsChecked="{Binding CleanupEnabled}" Margin="20,10,0,0"
+                                              ToolTip="When you reach the limit above, let Savedrake remove the oldest automatic backups to make room. Pinned backups are never removed." />
+                                    <CheckBox Content="Send removed automatic backups to the Recycle Bin"
+                                              IsChecked="{Binding RecycleEnabled}" IsEnabled="{Binding CleanupEnabled}" Margin="44,6,0,0"
+                                              ToolTip="Send removed backups to the Recycle Bin instead of deleting them for good, so you can get one back if you change your mind." />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 3. Appearance -->
+                            <Border Style="{StaticResource CardBorder}">
+                                <StackPanel>
+                                    <TextBlock Text="Appearance" Style="{StaticResource SectionTitle}" />
+                                    <Button Content="{Binding ThemeMenuLabel}" Style="{StaticResource OutlineButton}"
+                                            Padding="14,7" HorizontalAlignment="Left" Click="ToggleTheme_Click" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 4. When backups are made (name format + hotkey) -->
+                            <Border Style="{StaticResource CardBorder}">
+                                <StackPanel>
+                                    <TextBlock Text="Backups" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="How new backups are named" FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextBrush}" Margin="0,0,0,2" />
+                                    <RadioButton Content="Random names" Margin="0,8,0,0"
+                                                 IsChecked="{Binding UseRandomName, Mode=TwoWay}" />
+                                    <RadioButton Content="Date and time names" Margin="0,6,0,0"
+                                                 IsChecked="{Binding UseRandomName, Converter={StaticResource NotBool}, Mode=TwoWay}" />
+
+                                    <TextBlock Text="Backup hotkey" FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextBrush}" Margin="0,16,0,4" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding HotkeyDisplay}" VerticalAlignment="Center" MinWidth="120"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Button Content="Set backup hotkey…" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="10,0,0,0" Click="SetHotkey_Click" />
+                                    </StackPanel>
+                                    <TextBlock Text="Press your hotkey any time to make a backup, even while you're in the game."
+                                               FontSize="11" Foreground="{DynamicResource TextHintBrush}" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 5. System tray -->
+                            <Border Style="{StaticResource CardBorder}">
+                                <StackPanel>
+                                    <TextBlock Text="System tray" Style="{StaticResource SectionTitle}" />
+                                    <CheckBox Content="Minimize to the system tray instead of the taskbar"
+                                              IsChecked="{Binding MinimizeToTray}" Margin="0,2,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 6. Recovery -->
+                            <Border Style="{StaticResource CardBorder}">
+                                <StackPanel>
+                                    <TextBlock Text="Recovery" Style="{StaticResource SectionTitle}" />
+                                    <Button Content="Undo last restore" Style="{StaticResource OutlineButton}" Padding="14,7"
+                                            HorizontalAlignment="Left" Command="{Binding UndoLastRestoreCommand}"
+                                            ToolTip="Put your live DD2 save back the way it was right before your last restore or load." />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 7. Reset -->
+                            <Border Style="{StaticResource CardBorder}">
+                                <StackPanel>
+                                    <TextBlock Text="Reset" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Clear Savedrake's settings and start over. Your backups on disk are not deleted."
+                                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" TextWrapping="Wrap" Margin="0,2,0,8" />
+                                    <Button Content="Reset Savedrake…" Style="{StaticResource DangerButton}" Padding="14,7"
+                                            HorizontalAlignment="Left" Click="Reset_Click" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 8. About & Help -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="About &amp; Help" Style="{StaticResource SectionTitle}" />
+                                    <WrapPanel>
+                                        <Button Content="Check for updates" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="0,4,8,0" Click="CheckUpdates_Click" />
+                                        <Button Content="FAQ" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="0,4,8,0" Command="{Binding OpenFaqCommand}" />
+                                        <Button Content="About" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="0,4,8,0" Command="{Binding OpenAboutCommand}" />
+                                        <Button Content="Open log folder" Style="{StaticResource OutlineButton}" Padding="14,6"
+                                                Margin="0,4,8,0" Command="{Binding OpenLogFolderCommand}" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding AppVersion, StringFormat=Version {0}}"
+                                               FontSize="11" Foreground="{DynamicResource TextHintBrush}" Margin="0,10,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+            </TabControl>
         </Grid>
 
         <!-- ============================ STATUS BAR ============================ -->

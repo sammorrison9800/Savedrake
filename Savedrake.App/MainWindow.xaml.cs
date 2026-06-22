@@ -120,13 +120,6 @@ namespace Savedrake.App
             }
         }
 
-        // Open the folder Settings dialog (save game + backups paths). Shares the main window's view model so the
-        // path fields and Detect/Browse commands operate on the live state.
-        private void Settings_Click(object sender, RoutedEventArgs e)
-        {
-            new SettingsWindow { Owner = this, DataContext = DataContext }.ShowDialog();
-        }
-
         // Build the tray icon + its Show/Quit menu. Hidden until the window is minimized with "minimize to tray" on.
         private void InitTray()
         {
@@ -280,40 +273,37 @@ namespace Savedrake.App
             vm.RefreshBackups();
         }
 
-        // Open a header button's dropdown (File / Help) as a menu anchored under the button.
-        private void HeaderMenu_Click(object sender, RoutedEventArgs e)
+        // Backups tab "Manage…": jump to the Characters tab.
+        private void GoToCharactersTab_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button b && b.ContextMenu != null)
+            MainTabs.SelectedIndex = 1;
+        }
+
+        // Backups strip ComboBox: changing the selected character switches which character's backups are shown (one
+        // click). SwitchCharacter early-returns when the name is already active, so the programmatic re-selection that
+        // RefreshCharacters() performs (it re-picks the active row) is a harmless no-op and cannot loop.
+        private void CharacterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!(DataContext is MainViewModel vm)) return;
+            if (!((sender as ComboBox)?.SelectedItem is ViewModels.CharacterRow row)) return;
+            vm.SwitchCharacterCommand.Execute(row.Name);
+        }
+
+        // Characters tab: double-click a row to switch to that character, then land on the Backups tab to show the result.
+        private void CharacterList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (DataContext is MainViewModel vm && vm.SelectedCharacter != null)
             {
-                b.ContextMenu.PlacementTarget = b;
-                b.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-                b.ContextMenu.IsOpen = true;
+                vm.SwitchCharacterCommand.Execute(vm.SelectedCharacter.Name);
+                MainTabs.SelectedIndex = 0;   // show the backups they just switched to
             }
         }
 
-        // Build + open the character switcher: one checkable row per character (switch on click), then "New character".
-        private void CharacterMenu_Click(object sender, RoutedEventArgs e)
+        // Characters tab "Switch to" button: the actual switch is the button's Command binding; this only jumps to the
+        // Backups tab afterwards so the result is visible.
+        private void SwitchToButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!(sender is Button b) || !(DataContext is ViewModels.MainViewModel vm)) return;
-            var menu = new ContextMenu
-            {
-                PlacementTarget = b,
-                Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
-            };
-            foreach (var c in vm.EnumerateCharacters())
-            {
-                menu.Items.Add(new MenuItem
-                {
-                    Header = c.Name + "   (" + c.FileCount + (c.FileCount == 1 ? " file)" : " files)"),
-                    IsChecked = string.Equals(c.Name, vm.ActiveCharacter, System.StringComparison.OrdinalIgnoreCase),
-                    Command = vm.SwitchCharacterCommand,
-                    CommandParameter = c.Name
-                });
-            }
-            menu.Items.Add(new Separator());
-            menu.Items.Add(new MenuItem { Header = "New character…", Command = vm.NewCharacterCommand });
-            menu.Items.Add(new MenuItem { Header = "Rename current character…", Command = vm.RenameCharacterCommand });
-            menu.IsOpen = true;
+            MainTabs.SelectedIndex = 0;
         }
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)

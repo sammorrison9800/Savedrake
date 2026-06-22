@@ -677,6 +677,7 @@ namespace Savedrake.App.ViewModels
                 SelectedBackup = null;
                 // No valid (character) backup folder yet -> nothing to count. AutobackupCountStore.Read already returns
                 // 0 for a missing count file, so there is nothing to write here (and the dir may not exist yet).
+                RefreshCharacters();
                 return;
             }
 
@@ -718,6 +719,8 @@ namespace Savedrake.App.ViewModels
             // exists first so the per-character cache actually lands.
             EnsureEffectiveDirExists();
             AutobackupCountStore.RecomputeAndWrite(dir, CountFilePath);
+
+            RefreshCharacters();
         }
 
         // ================= folder pickers =================
@@ -1017,6 +1020,7 @@ namespace Savedrake.App.ViewModels
         {
             HotkeyCtrl = ctrl; HotkeyShift = shift; HotkeyAlt = alt; HotkeyVk = vk;
             HotkeyDisplay = display; HotkeyEnabled = true;
+            OnPropertyChanged(nameof(HotkeyDisplay));
             SaveSettings();
             _status.Set("Backup hotkey set to " + display + ".");
         }
@@ -1025,6 +1029,7 @@ namespace Savedrake.App.ViewModels
         {
             HotkeyCtrl = HotkeyShift = HotkeyAlt = false; HotkeyVk = 0;
             HotkeyDisplay = ""; HotkeyEnabled = false;
+            OnPropertyChanged(nameof(HotkeyDisplay));
             SaveSettings();
             _status.Set("Backup hotkey cleared.");
         }
@@ -1200,6 +1205,38 @@ namespace Savedrake.App.ViewModels
             if (!list.Any(x => string.Equals(x.Name, ActiveCharacter, StringComparison.OrdinalIgnoreCase)))
                 list.Insert(0, (ActiveCharacter, 0));
             return list;
+        }
+
+        // ================= Characters tab =================
+
+        // Rows for the Characters tab. Rebuilt wholesale by RefreshCharacters() (called at the end of RefreshBackups),
+        // so every character-affecting path (switch/new/rename/load) and a theme toggle keep this list current.
+        public ObservableCollection<CharacterRow> Characters { get; } = new ObservableCollection<CharacterRow>();
+
+        // The highlighted row on the Characters tab AND the selected item of the Backups-tab character switcher (shared).
+        [ObservableProperty]
+        private CharacterRow selectedCharacter;
+
+        // Rebuild the Characters list from EnumerateCharacters() (the single source of truth), tagging the active and
+        // playing rows, and preserve the selection by name across the rebuild so a refresh never clears it.
+        public void RefreshCharacters()
+        {
+            string keepName = SelectedCharacter?.Name;   // preserve selection across the rebuild
+            Characters.Clear();
+            foreach (var c in EnumerateCharacters())
+            {
+                Characters.Add(new CharacterRow
+                {
+                    Name = c.Name,
+                    FileCount = c.FileCount,
+                    IsActive = string.Equals(c.Name, ActiveCharacter, StringComparison.OrdinalIgnoreCase),
+                    IsPlaying = string.Equals(c.Name, LoadedCharacter, StringComparison.OrdinalIgnoreCase),
+                });
+            }
+            // Re-select the same character by name; fall back to the active row so a switch leaves it highlighted.
+            SelectedCharacter =
+                Characters.FirstOrDefault(r => string.Equals(r.Name, keepName, StringComparison.OrdinalIgnoreCase))
+                ?? Characters.FirstOrDefault(r => r.IsActive);
         }
 
         // Load the ACTIVE (viewed) character's newest backup into the live DD2 save, making it the character you play.
