@@ -85,6 +85,7 @@ namespace RestoreHarness
                 Test_SoundAssetsShipped();   // success.wav / error.wav must ship next to Savedrake.exe
                 Test_MakeUniquePath();   // backup-name collision guard (timestamp backups no longer overwrite)
                 Test_PreRestoreCheckpoint();   // P4: snapshot the live save before a restore so it isn't discarded
+                Test_CheckpointPruning();     // cap the retention-exempt (Pre-Restore)/(Pre-Load) snapshots
                 Test_VerifyZipRestorable();   // P1: backups are CRC-verified at creation; corrupt ones are rejected
                 Test_BackupManifest();   // P1 layer 2: in-zip manifest verify (missing/corrupt files) + restore skips it
                 Test_ChangeFingerprint();   // change-aware autobackup (PR1): save fingerprint is stable/changes/fail-closed
@@ -304,6 +305,59 @@ namespace RestoreHarness
             File.WriteAllBytes(Path.Combine(same, "data000.bin"), B("savedata"));
             bool ok3 = (bool)mi.Invoke(null, new object[] { same, same });
             Check("live==backup -> skipped (no zip), returns true", ok3 && Directory.GetFiles(same, "*.zip").Length == 0);
+            Console.WriteLine();
+        }
+
+        static void Test_CheckpointPruning()
+        {
+            // The (Pre-Restore)/(Pre-Load) safety snapshots are exempt from autobackup cleanup, so they must be capped
+            // separately or they pile up forever. PruneCheckpoints keeps the newest N of a prefix; checkpoint creation
+            // self-prunes.
+            Console.WriteLine("== Safety-checkpoint pruning ==");
+            var prune = CM("RestoreEngine", "PruneCheckpoints");
+
+            // 13 (Pre-Restore) snapshots + unrelated files; keep 10 -> the 3 OLDEST go, the noise is untouched.
+            string dir = NewDir("prune_dir");
+            DateTime t0 = DateTime.UtcNow.AddHours(-20);
+            for (int i = 0; i < 13; i++)
+            {
+                string p = Path.Combine(dir, "(Pre-Restore) " + i.ToString("D2") + ".zip");
+                File.WriteAllBytes(p, B("x"));
+                File.SetCreationTimeUtc(p, t0.AddHours(i)); // i=0 oldest .. i=12 newest
+            }
+            File.WriteAllBytes(Path.Combine(dir, "(Auto) a.zip"), B("x"));
+            File.WriteAllBytes(Path.Combine(dir, "manual.zip"), B("x"));
+            File.WriteAllBytes(Path.Combine(dir, "(Pre-Load) z.zip"), B("x"));
+
+            int removed = (int)prune.Invoke(null, new object[] { dir, "(Pre-Restore)", 10 });
+            var names = Directory.GetFiles(dir, "*.zip").Select(Path.GetFileName).ToList();
+            int prLeft = names.Count(n => n.StartsWith("(Pre-Restore)"));
+            Check("prune removed the 3 oldest", removed == 3, "removed " + removed);
+            Check("exactly 10 (Pre-Restore) remain", prLeft == 10, "have " + prLeft);
+            Check("the 3 oldest were deleted",
+                !names.Contains("(Pre-Restore) 00.zip") && !names.Contains("(Pre-Restore) 01.zip") && !names.Contains("(Pre-Restore) 02.zip"));
+            Check("the newest survived", names.Contains("(Pre-Restore) 12.zip"));
+            Check("unrelated files untouched",
+                names.Contains("(Auto) a.zip") && names.Contains("manual.zip") && names.Contains("(Pre-Load) z.zip"));
+
+            // Under the cap -> nothing pruned.
+            string dir2 = NewDir("prune_under");
+            for (int i = 0; i < 4; i++) File.WriteAllBytes(Path.Combine(dir2, "(Pre-Load) " + i + ".zip"), B("x"));
+            int removed2 = (int)prune.Invoke(null, new object[] { dir2, "(Pre-Load)", 10 });
+            Check("under the cap -> nothing pruned", removed2 == 0 && Directory.GetFiles(dir2, "*.zip").Length == 4);
+
+            // Missing dir -> 0, no throw.
+            Check("missing dir -> 0 (no throw)",
+                (int)prune.Invoke(null, new object[] { Path.Combine(dir2, "nope"), "(Pre-Restore)", 10 }) == 0);
+
+            // Integration: an 11th (Pre-Restore) checkpoint self-prunes back to 10.
+            var create = CM("RestoreEngine", "CreatePreRestoreCheckpoint");
+            string live = NewDir("prune_live");
+            File.WriteAllBytes(Path.Combine(live, "data000.bin"), B("savedata"));
+            string bdir = NewDir("prune_backup");
+            for (int i = 0; i < 11; i++) create.Invoke(null, new object[] { live, bdir });
+            int created = Directory.GetFiles(bdir, "*.zip").Count(p => Path.GetFileName(p).StartsWith("(Pre-Restore)"));
+            Check("creating 11 checkpoints self-prunes to 10", created == 10, "have " + created);
             Console.WriteLine();
         }
 
