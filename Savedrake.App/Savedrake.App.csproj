@@ -29,6 +29,14 @@
     <FileVersion>1.4.0.0</FileVersion>
   </PropertyGroup>
 
+  <!-- Distribution channel (compile-time). DEFAULT build = the Nexus-hosted build: no auto-updater and no automatic
+       network call (the version check is user-initiated only and just points to the Nexus page). Build with
+       -p:Channel=GitHub to produce the GitHub build, which defines GITHUB_BUILD and adds the opt-in one-click updater.
+       Only the GitHub build may download/install updates; the Nexus build must not (Nexus file rules). -->
+  <PropertyGroup Condition="'$(Channel)' == 'GitHub'">
+    <DefineConstants>$(DefineConstants);GITHUB_BUILD</DefineConstants>
+  </PropertyGroup>
+
   <!-- The window/taskbar/tray icon. Bundled as a Resource so the Window.Icon pack URI can load it, and set as the
        exe ApplicationIcon above. Same icon the WinForms app ships. -->
   <ItemGroup>
