@@ -1,14 +1,20 @@
 # Savedrake Roadmap
 
-> **Status (updated 2026-06-17):** Most of Phase 1 (data-safety) plus the P2 logging item are now **implemented
-> on `master`** in PRs #34–#41: pre-restore safety checkpoint, verify-on-create, an in-zip integrity manifest,
-> re-verify on restore, the backup-integrity UI ("Validate all backups"), logging + global crash handling, the
-> `Uri.EscapeDataString` updater fix, and disk-space preflight + operation lock. **These are not yet released —
-> they ship at the next major release.** The remaining items below are not yet started.
-> The items here are *enhancements*, not bug fixes. The known defects were already fixed earlier
-> in PRs #13–#27 (transactional restore, hook/timer lifecycle, updater hardening, the full
-> code audit, and dead-code cleanup); the restore/update **core is considered solid** and
-> should be preserved.
+> **Status (updated 2026-06-22):** A large amount has shipped to `master` since this roadmap was written, all
+> **unreleased** (it ships at the next major release):
+> - **Phase 1 data-safety: largely DONE** — pre-restore safety checkpoint (P4); verify-on-create + in-zip integrity
+>   manifest + re-verify on restore + "Validate all backups" UI (P1); change-aware autobackup with content-hash dedup
+>   + tiered retention + pinning (P3); the three exception hooks + rolling logs (P2); disk-space preflight + operation
+>   lock; and capping the retention-exempt (Pre-Restore)/(Pre-Load) safety checkpoints so they can't pile up.
+> - **WinForms → WPF migration: DONE** — the app is now a themed WPF shell (`Savedrake.App`) over portable logic
+>   (`Savedrake.Core`), with a first-run setup flow and a tabbed **Backups / Characters / Settings** layout.
+> - **Characters / profiles: DONE** — per-character backup folders with a non-destructive migration, switch, rename,
+>   and a "Load into game" save-swap.
+> - **Update delivery: REWORKED (see P0 below)** — the bespoke self-updater was removed; the app now uses a dual-build
+>   model (the Nexus build makes no automatic network call; an opt-in GitHub build carries a one-click updater).
+>
+> The items here are *enhancements*, not bug fixes. The known defects were fixed earlier in PRs #13–#27, and the
+> restore **core is considered solid** and should be preserved.
 >
 > **Provenance:** this roadmap was produced from a multi-angle web-research pass and then
 > independently validated by **three separate external research passes** on **2026-06-17**
@@ -17,8 +23,8 @@
 > assumptions, the corrections are recorded under [Factual notes](#factual-notes-correctionsdont-regress).
 
 Savedrake is a single-game, local-first **Dragon's Dogma 2** (Steam appid `2054970`) save
-backup/restore utility for Windows (.NET Framework 4.8, C# 7.3, WinForms, MIT). This roadmap
-keeps that scope deliberately narrow — see [Explicitly out of scope](#explicitly-out-of-scope).
+backup/restore utility for Windows (.NET Framework 4.8, MIT; a WPF app over a portable core
+library). This roadmap keeps that scope deliberately narrow — see [Explicitly out of scope](#explicitly-out-of-scope).
 
 ---
 
@@ -26,8 +32,9 @@ keeps that scope deliberately narrow — see [Explicitly out of scope](#explicit
 
 1. **A backup tool must never be the thing that loses data.** Bias every change toward
    fail-safe behavior, verification, and an audit trail.
-2. **The auto-updater is a code-execution channel** to every user's machine. It deserves the
-   same rigor as the restore path (it currently has less).
+2. **Anything that downloads and runs code is a code-execution channel.** The Nexus-distributed
+   build therefore makes no automatic network call at all; only the opt-in GitHub build self-updates,
+   over HTTPS with an integrity check, and that build is never the one hosted on Nexus.
 3. **Stay small and DD2-focused.** Match the genuinely useful features of the dedicated DD2
    tools; do not grow into a general multi-game manager.
 4. **Preserve what already works:** transactional restore (staged swap + rollback), Zip-Slip
@@ -64,7 +71,7 @@ These were wrong or stale in earlier drafts and were corrected by the validation
 
 | # | Item | Why it's ranked here |
 |---|------|----------------------|
-| **P0** | **Authentic, signed auto-updater** | The updater downloads and *runs* code while only checking "is this a valid zip containing `Savedrake.exe`" — integrity, not authenticity. This is the single highest-leverage security fix. |
+| ~~P0~~ → **done** | ~~Authentic, signed auto-updater~~ **Update delivery reworked** | The bespoke self-updater that downloaded and ran code is **removed**. Delivery is now dual-build: the Nexus build makes no network call; the opt-in GitHub build self-updates over HTTPS with an integrity check. The original "code-execution channel" risk is closed for the Nexus build. See the P0 detail. |
 | **P1** | **Backup integrity verification** | A backup that looks fine but is corrupt when finally needed is the worst failure mode for a save tool. |
 | **P2** | **Logging + global exception handling** | `Program.cs` has none; a crash mid-backup/restore currently vanishes with no diagnostic trail. |
 | **P3** | **Change-aware auto-backup** | Timer-only can miss the exact overwrite moment or spam redundant snapshots that rotate the good one out. |
@@ -78,20 +85,17 @@ These were wrong or stale in earlier drafts and were corrected by the validation
 | Phase | Theme | Scope | Rough effort |
 |-------|-------|-------|--------------|
 | **1** | Data-safety quick wins — **pure code, no external dependencies; each its own reviewed PR** | backup manifest + verify-on-create + corrupt flag · pre-restore checkpoint · pin + tiered retention · `FileSystemWatcher` + debounce (behind a setting) · the three exception hooks + rolling logs · replace deprecated `Uri.EscapeUriString` · `SECURITY.md` + release checklist · README pitch update | ~1–2 weekends |
-| **2** | Trust & distribution — **needs maintainer decisions first** (see below) | signed update manifest **or** NetSparkle migration · Authenticode signing · Inno Setup per-user installer · GitHub Immutable Releases + artifact attestations · dependency audit / Dependabot | ~2–4 weeks |
+| **2** | Trust & distribution — **mostly parked** | code signing (Authenticode — parked by the maintainer) · Inno Setup per-user installer · GitHub Immutable Releases + artifact attestations · dependency audit / Dependabot (done) | ~2–4 weeks |
 | **3** | Bigger features | slot-aware restore (after the Aug-2026 update lands) · off-machine/configurable destinations · import/export with path remapping · optional encrypted exports · full DPI/accessibility pass · possible .NET 10 migration · package managers (winget/scoop/choco) — only **after** signing | ~1–3 months |
 
 ### Decisions required before Phase 2
 
-1. **Signing key custody** — generate an Ed25519 release-signing key; keep it offline on the
-   maintainer machine, or as a GitHub Actions environment secret gated by manual approval?
-2. **Code-signing path** — apply to **SignPath Foundation** (free for qualifying OSS) or pay
-   **Azure Artifact Signing** (≈ $9.99/month). Eligibility note: individual public-trust signing
-   is currently **US/Canada only** — confirm the maintainer qualifies, else fall back to an OV
-   certificate.
-3. **Accept the bootstrap caveat** — adding update-signature verification protects only updates
-   delivered *after* a user is already on the new (verifying) version; existing installs still
-   take one more unverified update first.
+The Ed25519 signed-update-manifest decisions no longer apply (the self-updater was removed; see P0).
+What remains, if/when the maintainer revisits trust & distribution:
+
+1. **Code signing — parked.** If revisited: SignPath Foundation (free for qualifying OSS) vs Azure
+   Artifact Signing (≈ $9.99/month); note individual public-trust signing is currently US/Canada only.
+2. **Installer** — whether to ship an Inno Setup per-user installer alongside the portable zip.
 
 ---
 
@@ -101,39 +105,24 @@ Each item: **What** · **Why** · **How** (concrete, .NET Framework 4.8) · **Ef
 
 ### Data safety
 
-#### P0 — Authentic, signed auto-updater
-- **What:** verify a cryptographic signature/attestation of each update before installing, not
-  just that the archive is a well-formed zip containing the exe.
-- **Why:** HTTPS protects transport only. A compromised GitHub account/token, a tampered release
-  asset, or a TLS-terminating proxy can serve a malicious `update.zip` that passes the current
-  check and is then extracted over the install and launched. `VerifyUpdatePackage` in
-  `updater/UpdaterForm.cs` openly documents that it is **not** an authenticity check.
-- **How (minimum viable, "TUF-lite"):**
-  - Publish per release: `manifest.json`, `manifest.json.sig`, `update.zip` (and an optional
-    human `SHA256SUMS.txt`).
-  - Sign the **exact UTF-8 bytes** of `manifest.json` with an **Ed25519** key (not a
-    re-serialized object, not just the zip). Embed the **public key** as a constant in the app.
-  - Manifest fields: `version`, `channel`, `createdUtc`, `expiresUtc`,
-    `minSupportedUpdaterVersion`, `releaseTag`, `keyId`, and `files[]` =
-    `{ name, url, length, sha256 }`.
-  - **Verification order:** download manifest + sig → verify Ed25519 signature → reject expired
-    metadata → reject `version <= current` → reject `version < highestSeenVersion` (persist it)
-    → download zip with a **length cap** → verify exact SHA-256 + length → zip-path / required-
-    entry checks → stage → *optionally* verify Authenticode on the staged `Savedrake.exe` → swap
-    transactionally (the existing rollback install is good).
-  - **Key rotation:** support `keyId`; a new public key is accepted only if the *old* key signs a
-    rotation manifest.
-  - **Don't** pin GitHub TLS certificates (rotation would brick updates) — app-level signatures
-    make pinning unnecessary. **Don't** build full TUF (delegated roles / offline root
-    ceremonies) — disproportionate for this tool.
-  - **Alternative:** migrate updater logic to **NetSparkle** (built-in Ed25519, supports
-    .NET Framework 4.6.2+) or **Velopack**, retiring the bespoke updater.
-  - Also enable **GitHub Immutable Releases** + **artifact attestations** (SLSA provenance) as
-    publishing-side hardening.
-- **Tests:** modified zip with same name; modified manifest with invalid sig; replayed old valid
-  manifest; expired manifest; zip larger than declared length; missing exe; zip-slip path; valid
-  zip with wrong SHA; downgrade attempt; network failure between stage and swap.
-- **Effort:** medium. **Phase 2.**
+#### P0 — Update delivery (reworked; the original bespoke self-updater is removed)
+- **Status: DONE / changed direction.** The original P0 here was "sign the bespoke auto-updater."
+  That updater has since been **removed entirely** (the separate `Savedrake-Updater.exe` project is
+  gone). Update delivery is now a **dual-build** model, which both closes the original risk and fits
+  Nexus's file rules (Nexus does not allow a hosted file that pulls executables from external sources):
+  - **Nexus build (default, the one uploaded to Nexus):** makes **no automatic network call**. The
+    startup check is a no-op; "Check for Updates" is user-initiated only and, if a newer release
+    exists, just opens the Nexus downloads page. The app downloads and installs nothing, so the
+    original "downloads and runs code" channel does not exist in this build.
+  - **GitHub build (opt-in, published only on GitHub; built with `-p:Channel=GitHub`):** a one-click
+    in-app updater — on the user's confirmation it downloads `update.zip` from the matching release,
+    verifies it over HTTPS as a readable zip containing `Savedrake.exe` (**integrity**), swaps the
+    files in place, and relaunches. This build is never uploaded to Nexus.
+- **Residual gap (integrity, not authenticity):** the GitHub build's check is integrity-only — it
+  does not cryptographically prove the publisher. The mitigation is **code-signing the exe** (see
+  "Code signing" below), currently **parked** by the maintainer. A signed-manifest / Ed25519 scheme
+  (the old plan) is **not** being pursued — disproportionate now that the Nexus build carries no
+  updater and the GitHub channel is opt-in.
 
 #### P1 — Backup integrity verification (manifest + verify-on-create)
 - **What:** prove a backup is restorable at creation time and flag corrupt ones in the UI.
@@ -205,7 +194,10 @@ Each item: **What** · **Why** · **How** (concrete, .NET Framework 4.8) · **Ef
 ### Trust & distribution
 
 #### Code signing (Authenticode)
-- **What:** sign `Savedrake.exe`, the updater, and any installer (RFC-3161 timestamped).
+- **Status: parked** (deferred by the maintainer for now). Listed for completeness; not an active
+  priority.
+- **What:** sign `Savedrake.exe` and any installer (RFC-3161 timestamped). There is no separate
+  updater to sign anymore.
 - **Why:** unsigned exes trigger SmartScreen "unknown publisher", **reset reputation on every
   release**, can be blocked outright by Windows 11 **Smart App Control**, and draw AV false
   positives. Signing lets reputation accrue to a stable identity.
@@ -290,9 +282,8 @@ Each item: **What** · **Why** · **How** (concrete, .NET Framework 4.8) · **Ef
   `AutoScaleMode.Dpi`, avoid fixed pixel layouts.
 - **Accessibility:** keyboard-only backup/restore paths, accessible control names, high-contrast,
   no sound-only alerts.
-- **Deprecated API:** replace `Uri.EscapeUriString` in the updater with `Uri.EscapeDataString`
-  (per-segment) or a built `Uri`/`UriBuilder` (`EscapeUriString` is obsolete and can corrupt
-  URIs). **Phase 1.**
+- **Deprecated API (done):** the only `Uri.EscapeUriString` use was in the now-removed updater; the
+  current update-check code uses `Uri.EscapeDataString`. Nothing left to do here.
 - **Encryption (later, conditional):** only for cloud/export destinations. DPAPI is **not**
   portable (CurrentUser-only); use a maintained AEAD (e.g. BouncyCastle) if portable encrypted
   archives are needed.
@@ -310,24 +301,24 @@ only **after** code signing and a stable installer/update story exist.
 
 ---
 
-## Self-updater threat model (summary)
+## Update-delivery threat model (current dual-build model)
 
-| Attacker capability | Control that helps | Minimum for a hobby tool? |
+The bespoke self-updater is gone, so most of the old self-updater threat surface no longer applies.
+What remains is scoped to the two channels:
+
+| Channel / capability | Exposure today | Note |
 |---|---|---|
-| Network / hostile Wi-Fi | signed manifest + SHA-256 + length (keep HTTPS) | **Yes** |
-| Tampered release asset after publish | signed manifest (offline key) + Immutable Releases | **Yes** |
-| Compromised repo token / account | offline/controlled signing key + manual release approval + attestations | **Yes** |
-| Old-version replay (rollback) | persist `highestSeenVersion`; reject downgrades | **Yes** |
-| Freeze (hide updates) | manifest `expiresUtc`; warn on stale metadata | **Yes (simple expiry)** |
-| Mix-and-match | manifest signs all file hashes/lengths together | **Yes** |
-| Oversized/slow download | declared length + max-size cap + streaming hash | **Yes** |
-| Zip-slip / path traversal | existing full-path checks + case-insensitive dup-dest tests | **Already mostly done** |
-| Compromised signing key | key rotation + protected storage + release audit | **Partial; full TUF = overkill** |
-| Local malware/admin | out of scope for a hobby updater | **No full mitigation** |
+| **Nexus build, any network attacker** | None — the build makes no network call (no download, no install) | The original "downloads and runs code" channel does not exist here |
+| **GitHub build, network / hostile Wi-Fi** | Mitigated by HTTPS + an integrity check (readable zip containing `Savedrake.exe`) | Integrity, not authenticity |
+| **GitHub build, tampered release asset / compromised repo token** | **Not** cryptographically detected (integrity-only) | Closed only by code-signing (parked) or a signed manifest (not pursued) |
+| **Zip-slip / path traversal in a downloaded zip** | Guarded (the same full-path checks used on restore) | Already done |
+| **Local malware / admin** | Out of scope for a local hobby tool | No full mitigation |
 
-**Minimum worth doing:** Ed25519-signed manifest, zip SHA-256 + length, downgrade protection,
-metadata expiry, Authenticode-signed binaries/installer, GitHub Immutable Releases, and the
-existing transactional install/rollback.
+**Where this lands:** the highest-risk piece — an always-on auto-updater that runs code on every
+user — is removed. The GitHub build's updater is opt-in and integrity-checked; raising it from
+integrity to authenticity is a code-signing decision the maintainer has parked. A full
+Ed25519-signed-manifest / TUF-lite scheme is intentionally **not** pursued (disproportionate for
+the current shape).
 
 ---
 
