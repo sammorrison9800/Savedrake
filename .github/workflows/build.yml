@@ -30,6 +30,12 @@ jobs:
       - name: Build solution (${{ matrix.configuration }})
         run: msbuild Savedrake.sln /p:Configuration=${{ matrix.configuration }} /p:Platform="Any CPU" /m /verbosity:minimal
 
+      # Compile-check the GitHub-channel code path (the GITHUB_BUILD one-click updater) so it can't rot. Built to a
+      # separate output folder so it never clobbers the Nexus-flavor artifact uploaded below.
+      - name: Compile-check GitHub channel (Release)
+        if: matrix.configuration == 'Release'
+        run: msbuild Savedrake.App/Savedrake.App.csproj /p:Configuration=Release /p:Channel=GitHub /p:BaseOutputPath=bin\ghcheck\ /m /verbosity:minimal
+
       - name: Run restore regression harness (${{ matrix.configuration }})
         shell: pwsh
         run: |
