@@ -1213,9 +1213,14 @@ namespace Savedrake.App.ViewModels
         // so every character-affecting path (switch/new/rename/load) and a theme toggle keep this list current.
         public ObservableCollection<CharacterRow> Characters { get; } = new ObservableCollection<CharacterRow>();
 
-        // The highlighted row on the Characters tab AND the selected item of the Backups-tab character switcher (shared).
+        // The highlighted row on the Characters tab (Rename / Switch-to targeting). Kept SEPARATE from the Backups-tab
+        // switcher selection so browsing the Characters list never silently switches the active character.
         [ObservableProperty]
         private CharacterRow selectedCharacter;
+
+        // The active character's row, bound to the Backups-tab switcher ComboBox (one-click switch lives there).
+        [ObservableProperty]
+        private CharacterRow activeCharacterRow;
 
         // Rebuild the Characters list from EnumerateCharacters() (the single source of truth), tagging the active and
         // playing rows, and preserve the selection by name across the rebuild so a refresh never clears it.
@@ -1233,10 +1238,12 @@ namespace Savedrake.App.ViewModels
                     IsPlaying = string.Equals(c.Name, LoadedCharacter, StringComparison.OrdinalIgnoreCase),
                 });
             }
-            // Re-select the same character by name; fall back to the active row so a switch leaves it highlighted.
+            // The switcher ComboBox always shows the active character.
+            ActiveCharacterRow = Characters.FirstOrDefault(r => r.IsActive);
+            // Re-select the same highlighted row by name; fall back to the active row.
             SelectedCharacter =
                 Characters.FirstOrDefault(r => string.Equals(r.Name, keepName, StringComparison.OrdinalIgnoreCase))
-                ?? Characters.FirstOrDefault(r => r.IsActive);
+                ?? ActiveCharacterRow;
         }
 
         // Load the ACTIVE (viewed) character's newest backup into the live DD2 save, making it the character you play.

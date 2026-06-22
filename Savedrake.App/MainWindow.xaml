@@ -184,7 +184,7 @@
                                            Foreground="{DynamicResource TextSecondaryBrush}" />
                                 <ComboBox Grid.Column="1" x:Name="CharacterCombo" Margin="8,0,0,0" MinWidth="160"
                                           ItemsSource="{Binding Characters}"
-                                          SelectedItem="{Binding SelectedCharacter, Mode=TwoWay}"
+                                          SelectedItem="{Binding ActiveCharacterRow, Mode=TwoWay}"
                                           DisplayMemberPath="Name"
                                           SelectionChanged="CharacterCombo_SelectionChanged"
                                           ToolTip="Switch which character's backups you're managing. Each character keeps its own backups." />
