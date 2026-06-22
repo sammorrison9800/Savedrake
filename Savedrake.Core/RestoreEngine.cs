@@ -51,6 +51,7 @@ namespace Savedrake
                     return false;
                 }
                 File.Move(tempZip, checkpointPath); // atomically publish the completed checkpoint
+                PruneCheckpoints(backupDir, PreRestorePrefix, CheckpointKeepCount); // cap the retention-exempt snapshots
                 return true;
             }
             catch (Exception)
@@ -101,6 +102,7 @@ namespace Savedrake
                     return false;
                 }
                 File.Move(tempZip, checkpointPath); // atomically publish the completed checkpoint
+                PruneCheckpoints(targetFolder, PreLoadPrefix, CheckpointKeepCount); // cap the retention-exempt snapshots
                 return true;
             }
             catch (Exception)
@@ -108,6 +110,40 @@ namespace Savedrake
                 try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
                 return false;
             }
+        }
+
+        // Safety-checkpoint retention. The (Pre-Restore)/(Pre-Load) snapshots are deliberately exempt from the normal
+        // autobackup cleanup (so a restore's "before" image is never auto-pruned mid-session), which means they would
+        // otherwise pile up forever under heavy restore/load use. Cap each kind to the newest few per folder.
+        public const int CheckpointKeepCount = 10;
+        public const string PreRestorePrefix = "(Pre-Restore)";
+        public const string PreLoadPrefix = "(Pre-Load)";
+
+        // Keep only the newest `keep` *.zip files whose name starts with `prefix` in `dir`; delete the older ones.
+        // Best-effort: a delete failure (locked/in-use) is swallowed and that file simply survives to the next prune.
+        // Only the newest checkpoint of each kind is functionally needed (Undo last restore / round-trip load); the rest
+        // are a short safety history. Returns how many were deleted.
+        public static int PruneCheckpoints(string dir, string prefix, int keep)
+        {
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(prefix) || keep < 0) return 0;
+            FileInfo[] matches;
+            try
+            {
+                matches = Directory.GetFiles(dir, "*.zip")
+                    .Where(f => Path.GetFileName(f).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    .Select(f => new FileInfo(f))
+                    .ToArray();
+            }
+            catch { return 0; } // unreadable folder -> nothing to prune
+            if (matches.Length <= keep) return 0;
+            Array.Sort(matches, (a, b) => b.CreationTimeUtc.CompareTo(a.CreationTimeUtc)); // newest first
+            int removed = 0;
+            for (int i = keep; i < matches.Length; i++)
+            {
+                try { matches[i].Delete(); removed++; }
+                catch { /* locked/in-use -> leave it; the next prune will catch it */ }
+            }
+            return removed;
         }
 
         public static bool Rollback(string liveDir, string rollbackDir, bool stagingStarted)
